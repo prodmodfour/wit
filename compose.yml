@@ -65,6 +65,21 @@ services:
       - internal
       - egress
 
+  seerr:
+    image: ghcr.io/seerr-team/seerr:v3.3.0
+    init: true
+    environment:
+      TZ: "${TZ:-Etc/UTC}"
+    volumes:
+      - type: bind
+        source: "${WIT_DATA_ROOT:-./data}/config/seerr"
+        target: /app/config
+    ports:
+      - "127.0.0.1:${SEERR_PORT:-5055}:5055"
+    networks:
+      - internal
+      - egress
+
 networks:
   internal:
     name: wit-internal

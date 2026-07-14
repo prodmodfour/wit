@@ -149,7 +149,7 @@ Commit as one focused service commit.
 
 ## 006 — Add the Seerr Compose service
 
-Status: TODO
+Status: DONE
 
 Add Seerr as the human discovery and request interface.
 

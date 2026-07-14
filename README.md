@@ -44,7 +44,7 @@ Never commit a real `.env`, API key, credential, private hostname, machine-speci
 
 ## Compose services and storage
 
-[`compose.yml`](compose.yml) currently provides qBittorrent as the stack's default download client, Sonarr for television-library management, and Jellyfin as the completed-library browser and player; Seerr remains planned. All three services join the isolated service network and a bridge used for outbound traffic. Their web interfaces are available only on `127.0.0.1` by default. The Compose model validates without a real `.env`:
+[`compose.yml`](compose.yml) provides qBittorrent as the stack's default download client, Sonarr for television-library management, Jellyfin as the completed-library browser and player, and Seerr as the human discovery and request interface. All four services join the isolated service network and a bridge used for outbound traffic. Their web interfaces are available only on `127.0.0.1` by default. The Compose model validates without a real `.env`:
 
 ```bash
 docker compose config
@@ -55,6 +55,7 @@ All persistent bind-mounted data lives below one `WIT_DATA_ROOT` (default: the i
 - `${WIT_DATA_ROOT}/config/qbittorrent/` for qBittorrent configuration
 - `${WIT_DATA_ROOT}/config/sonarr/` for Sonarr configuration
 - `${WIT_DATA_ROOT}/config/jellyfin/` for Jellyfin configuration
+- `${WIT_DATA_ROOT}/config/seerr/` for Seerr configuration and its local database
 - `${WIT_DATA_ROOT}/cache/jellyfin/` for Jellyfin's separately persisted cache
 - `${WIT_DATA_ROOT}/config/` for other per-service configuration added later
 - `${WIT_DATA_ROOT}/downloads/` mounted at `/downloads` in both qBittorrent and Sonarr
@@ -77,6 +78,14 @@ Both containers see download data at `/downloads`, so a remote path mapping is n
 Start Jellyfin with `docker compose up -d jellyfin` and open `http://127.0.0.1:8096` (or the locally configured `JELLYFIN_PORT`). In the first-run wizard, add the television library from `/tv`. Compose mounts that path read-only so Jellyfin can catalogue and play completed episodes without modifying the media Sonarr manages. Jellyfin configuration and cache data are writable, separate bind mounts under `WIT_DATA_ROOT`.
 
 Hardware transcoding is optional and host-specific. The default service intentionally enables no GPU runtime or host devices. Follow Jellyfin's [hardware-acceleration documentation](https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/) and use the ignored local `compose.override.yml` if acceleration is needed. Grant only the required device: Linux VA-API or QSV hosts commonly use a render node such as `/dev/dri/renderD128`, while other hardware has different requirements. Verify device ownership and container-user access locally rather than committing a machine-specific mapping. The default service also publishes no discovery ports and does not use host networking.
+
+### Seerr discovery and request setup
+
+Complete the first-run setup for Sonarr and Jellyfin before configuring Seerr. Start Seerr with `docker compose up -d seerr` and open `http://127.0.0.1:5055` (or the locally configured `SEERR_PORT`). The official image runs as UID 1000 by default, so `${WIT_DATA_ROOT}/config/seerr/` must be writable by that user for settings and its local database to persist.
+
+In Seerr's setup wizard, connect Jellyfin at `http://jellyfin:8096` and Sonarr at `http://sonarr:8989`; these Compose service names work between containers. Supply the required login or API credentials only through the local first-run interfaces. No users, credentials, or API keys are preconfigured or stored in committed files.
+
+Seerr is the optional human discovery and request browser and hands approved series requests to Sonarr. It is not in Wit's episode-level plan/apply path: that planned CLI workflow communicates with Sonarr directly and does not depend on Seerr being available.
 
 ## Building Wit
 
