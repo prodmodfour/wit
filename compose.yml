@@ -3,6 +3,24 @@ name: wit
 services:
   qbittorrent:
     image: lscr.io/linuxserver/qbittorrent:5.2.1
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --show-error
+        - --location
+        - --output
+        - /dev/null
+        - "http://127.0.0.1:${QBITTORRENT_PORT:-8080}/"
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     environment:
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"
@@ -23,6 +41,27 @@ services:
 
   sonarr:
     image: lscr.io/linuxserver/sonarr:4.0.16
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --show-error
+        - --location
+        - --output
+        - /dev/null
+        - http://127.0.0.1:8989/ping
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 60s
+    depends_on:
+      qbittorrent:
+        condition: service_healthy
     environment:
       PUID: "${PUID:-1000}"
       PGID: "${PGID:-1000}"
@@ -45,6 +84,24 @@ services:
 
   jellyfin:
     image: jellyfin/jellyfin:10.11.11
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - curl
+        - --fail
+        - --silent
+        - --show-error
+        - --location
+        - --output
+        - /dev/null
+        - http://127.0.0.1:8096/health
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
     user: "${PUID:-1000}:${PGID:-1000}"
     environment:
       TZ: "${TZ:-Etc/UTC}"
@@ -67,6 +124,26 @@ services:
 
   seerr:
     image: ghcr.io/seerr-team/seerr:v3.3.0
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - wget
+        - --no-verbose
+        - --tries=1
+        - --spider
+        - http://127.0.0.1:5055/api/v1/settings/public
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      jellyfin:
+        condition: service_healthy
+      sonarr:
+        condition: service_healthy
     init: true
     environment:
       TZ: "${TZ:-Etc/UTC}"

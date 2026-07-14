@@ -63,6 +63,23 @@ All persistent bind-mounted data lives below one `WIT_DATA_ROOT` (default: the i
 
 [`.env.example`](.env.example) defines generic `PUID`, `PGID`, `TZ`, and localhost port defaults. Copy it to the ignored `.env` only when local overrides are needed, and keep every machine-specific value there.
 
+### Health checks, startup ordering, and image updates
+
+Every service has a credential-free HTTP health check against its container loopback interface, an `unless-stopped` restart policy, and `no-new-privileges`. Health indicates that the local application endpoint responds; it does not prove that first-run setup or external integrations are correctly configured.
+
+Compose waits for qBittorrent to become healthy before starting Sonarr. Seerr waits for both Sonarr and Jellyfin because those are its configured upstream services. These conditions provide deterministic startup ordering only: they do not restart a dependent service after an upstream runtime outage.
+
+Images are constrained to explicit stable application release tags in [`compose.yml`](compose.yml), never floating `latest`, major-version, or development aliases. Updates are deliberate and service-by-service: review the upstream release and security notes, change the service to a new exact release tag, run the repository quality gate, then pull and recreate only that service. Do not use an unattended image updater for this stack. For example, after a reviewed Seerr tag change:
+
+```bash
+scripts/quality-gate.sh
+docker compose pull seerr
+docker compose up -d seerr
+docker compose ps seerr
+```
+
+[`scripts/check-compose-config.sh`](scripts/check-compose-config.sh) renders the model with an empty environment file and asserts the pinned images, health checks, restart and security settings, healthy dependency conditions, isolated network, and localhost port bindings. It uses `docker compose config` only; it does not pull images or create or start containers.
+
 ### qBittorrent first login
 
 Start only qBittorrent with `docker compose up -d qbittorrent`, then inspect `docker compose logs qbittorrent` locally for the generated temporary password for the initial `admin` user. Sign in at `http://127.0.0.1:8080` (or the locally configured `QBITTORRENT_PORT`) and immediately replace the temporary login with a unique username and password in the Web UI settings. Until it is changed, qBittorrent generates a new temporary password on each start. Do not paste the log output into tickets or store the resulting credentials in Compose, `.env`, or any committed file.

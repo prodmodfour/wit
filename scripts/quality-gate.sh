@@ -162,6 +162,9 @@ if [[ -f docker-compose.yml ]] || [[ -f compose.yml ]]; then
       pp_cmd "docker compose -f compose.yml config >/dev/null"
       docker compose -f compose.yml config >/dev/null
     fi
+    if [[ -f scripts/check-compose-config.sh ]]; then
+      run_cmd bash scripts/check-compose-config.sh
+    fi
   else
     warn "docker not installed; skipping Docker Compose validation"
   fi

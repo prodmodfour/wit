@@ -169,7 +169,7 @@ Commit as one focused service commit.
 
 ## 007 — Harden and health-check the Compose stack
 
-Status: TODO
+Status: DONE
 
 Apply a single coherent operational-hardening pass after all services exist.
 
