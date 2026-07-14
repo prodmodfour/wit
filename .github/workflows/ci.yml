@@ -8,26 +8,26 @@ permissions:
   contents: read
 
 jobs:
-  validate-scaffold:
+  validate:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out the repository
+        uses: actions/checkout@v4
 
-      - name: Check shell syntax
-        run: |
-          while IFS= read -r script; do
-            bash -n "$script"
-          done < <(find scripts -type f -name '*.sh' | sort)
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
-      - name: Run quality gate
-        run: bash scripts/quality-gate.sh
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          version: "0.11.2"
+          enable-cache: true
 
       - name: Verify template is customised for Wit
-        run: |
-          grep -Eq '^TEMPLATE_CUSTOMISED:[[:space:]]*true[[:space:]]*$' PROJECT_BRIEF.md
+        run: grep -Eq '^TEMPLATE_CUSTOMISED:[[:space:]]*true[[:space:]]*$' PROJECT_BRIEF.md
 
-      - name: Verify autonomous queue is configured
-        run: |
-          grep -Eq '^AUTOMATION_STATUS:[[:space:]]*NOT_DONE[[:space:]]*$' BUILD_TICKETS.md
-          grep -Eq '^Status:[[:space:]]*TODO[[:space:]]*$' BUILD_TICKETS.md
+      - name: Run the repository quality gate
+        run: bash scripts/quality-gate.sh

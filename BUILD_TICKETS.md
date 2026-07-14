@@ -38,7 +38,7 @@ Commit as one focused bootstrap commit.
 
 ## 001 — Adapt CI to the Wit toolchain
 
-Status: TODO
+Status: DONE
 
 Replace the scaffold-only CI checks with project validation.
 
