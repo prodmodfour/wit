@@ -19,7 +19,7 @@ Pi / operator -> wit CLI -> Sonarr -> download client -> TV library -> Jellyfin
 
 ## Status
 
-Wit is currently an **autonomous-build scaffold**, not a working media application yet. The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md).
+Wit is currently in early autonomous development, not a working media application yet. The installable bootstrap CLI supports only `wit --help` and `wit --version`; the media commands below remain planned. The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md).
 
 Each successful build ticket is deliberately sized for one focused conventional commit.
 
@@ -51,6 +51,14 @@ Required reading for an implementation cycle:
 - [`AGENTS.md`](AGENTS.md)
 - [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md)
 - [`BUILD_TICKETS.md`](BUILD_TICKETS.md)
+
+Bootstrap development requires Python 3.12 or newer and [uv](https://docs.astral.sh/uv/). Install the locked dependencies and run the available CLI options with:
+
+```bash
+uv sync --locked --all-groups
+uv run wit --help
+uv run wit --version
+```
 
 Run the current quality gate:
 

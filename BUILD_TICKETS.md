@@ -15,7 +15,7 @@ Every successful ticket below is intentionally sized for one focused conventiona
 
 ## 000 — Bootstrap the Python CLI package
 
-Status: TODO
+Status: DONE
 
 Create the installable Python package without media-service business logic.
 
