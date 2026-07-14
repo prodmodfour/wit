@@ -193,7 +193,7 @@ Commit as one focused hardening commit.
 
 ## 008 — Add a safe host bootstrap script
 
-Status: TODO
+Status: DONE
 
 Create the non-destructive local setup helper.
 

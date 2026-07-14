@@ -63,6 +63,18 @@ All persistent bind-mounted data lives below one `WIT_DATA_ROOT` (default: the i
 
 [`.env.example`](.env.example) defines generic `PUID`, `PGID`, `TZ`, and localhost port defaults. Copy it to the ignored `.env` only when local overrides are needed, and keep every machine-specific value there.
 
+### Host directory bootstrap
+
+Run the non-destructive host helper before starting the stack:
+
+```bash
+scripts/bootstrap-host.sh --copy-env
+```
+
+The helper creates every documented service configuration directory, Jellyfin's cache directory, the shared downloads directory, and the television library. `--copy-env` copies `.env.example` unchanged only when `.env` is absent and gives the new file mode `600`; an existing `.env` is never overwritten or re-permissioned.
+
+The defaults match `.env.example`. Use `--data-root`, `--puid`, and `--pgid` (or the corresponding `WIT_DATA_ROOT`, `PUID`, and `PGID` environment variables) when local values differ, then put those same non-secret values in the ignored `.env` before running Compose. Relative data roots are resolved from the repository root. The helper validates all IDs and target paths before creating anything, refuses empty paths, `/`, the repository root, non-directory targets, and paths that escape through symlinks, and never changes ownership, starts containers, or deletes existing data. Run `scripts/bootstrap-host.sh --help` for the complete option list.
+
 ### Health checks, startup ordering, and image updates
 
 Every service has a credential-free HTTP health check against its container loopback interface, an `unless-stopped` restart policy, and `no-new-privileges`. Health indicates that the local application endpoint responds; it does not prove that first-run setup or external integrations are correctly configured.

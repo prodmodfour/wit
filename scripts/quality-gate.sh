@@ -43,7 +43,7 @@ if (( ${#python_scripts[@]} > 0 )); then
 fi
 
 mapfile -d '' script_regression_tests < <(
-  find scripts -maxdepth 1 -type f -name 'test-build-loop-*.sh' -print0 | sort -z
+  find scripts -maxdepth 1 -type f -name 'test-*.sh' -print0 | sort -z
 )
 
 if (( ${#script_regression_tests[@]} > 0 )); then
