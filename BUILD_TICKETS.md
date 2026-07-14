@@ -59,7 +59,7 @@ Commit as one focused CI commit.
 
 ## 002 — Define the Compose environment and storage contract
 
-Status: TODO
+Status: DONE
 
 Add the service-neutral Docker Compose foundation.
 

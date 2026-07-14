@@ -50,6 +50,7 @@ coverage/
 
 # Docker/local
 
+/data/
 docker-compose.override.yml
 
 # Keys/certs

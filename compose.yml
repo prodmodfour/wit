@@ -1,0 +1,10 @@
+name: wit
+
+# Application services are added by their own build tickets.
+services: {}
+
+networks:
+  internal:
+    name: wit-internal
+    driver: bridge
+    internal: true

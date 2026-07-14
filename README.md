@@ -42,6 +42,22 @@ Wit will not provide content sources, configure indexers, bypass DRM, extract su
 
 Never commit a real `.env`, API key, credential, private hostname, machine-specific path, or media-library data.
 
+## Compose foundation and storage
+
+[`compose.yml`](compose.yml) currently defines the `wit` project and its isolated internal service network, but intentionally contains no application services yet. Its generic defaults work without a real `.env`:
+
+```bash
+docker compose config
+```
+
+All persistent bind-mounted data will live below one `WIT_DATA_ROOT` (default: the ignored `./data` directory) with this fixed layout:
+
+- `${WIT_DATA_ROOT}/config/` for per-service configuration
+- `${WIT_DATA_ROOT}/downloads/` for download-client data shared with Sonarr
+- `${WIT_DATA_ROOT}/television/` for the organised television library
+
+[`.env.example`](.env.example) also defines generic `PUID`, `PGID`, `TZ`, and localhost port defaults for the services that later tickets will add. Copy it to the ignored `.env` only when local overrides are needed, and keep every machine-specific value there.
+
 ## Building Wit
 
 This repository was created from the autonomous-build template and retains its ticket-driven build tooling.
