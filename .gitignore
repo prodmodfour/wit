@@ -1,0 +1,62 @@
+# Agent/private runtime state
+
+.agent/
+.pi/
+
+# Environment/secrets
+
+.env
+.env.*
+!.env.example
+!*env.example
+
+# OS/editor
+
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Python
+
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+dist/
+build/
+*.egg-info/
+
+# Node
+
+node_modules/
+.npm/
+.nuxt/
+.output/
+coverage/
+
+# Terraform
+
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+!*.tfvars.example
+.terraform/
+.terraform.lock.hcl
+
+# Docker/local
+
+docker-compose.override.yml
+
+# Keys/certs
+
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
