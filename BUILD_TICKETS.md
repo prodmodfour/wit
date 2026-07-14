@@ -82,7 +82,7 @@ Commit as one focused Compose-foundation commit.
 
 ## 003 — Add the qBittorrent Compose service
 
-Status: TODO
+Status: DONE
 
 Add qBittorrent as the default download client.
 

@@ -42,21 +42,28 @@ Wit will not provide content sources, configure indexers, bypass DRM, extract su
 
 Never commit a real `.env`, API key, credential, private hostname, machine-specific path, or media-library data.
 
-## Compose foundation and storage
+## Compose services and storage
 
-[`compose.yml`](compose.yml) currently defines the `wit` project and its isolated internal service network, but intentionally contains no application services yet. Its generic defaults work without a real `.env`:
+[`compose.yml`](compose.yml) currently provides qBittorrent as the stack's default download client; the other application services remain planned. qBittorrent joins the isolated service network and a bridge used for outbound traffic. Its Web UI is available only on `127.0.0.1` by default. The Compose model validates without a real `.env`:
 
 ```bash
 docker compose config
 ```
 
-All persistent bind-mounted data will live below one `WIT_DATA_ROOT` (default: the ignored `./data` directory) with this fixed layout:
+All persistent bind-mounted data lives below one `WIT_DATA_ROOT` (default: the ignored `./data` directory) with this fixed layout:
 
-- `${WIT_DATA_ROOT}/config/` for per-service configuration
+- `${WIT_DATA_ROOT}/config/qbittorrent/` for qBittorrent configuration
+- `${WIT_DATA_ROOT}/config/` for other per-service configuration added later
 - `${WIT_DATA_ROOT}/downloads/` for download-client data shared with Sonarr
 - `${WIT_DATA_ROOT}/television/` for the organised television library
 
-[`.env.example`](.env.example) also defines generic `PUID`, `PGID`, `TZ`, and localhost port defaults for the services that later tickets will add. Copy it to the ignored `.env` only when local overrides are needed, and keep every machine-specific value there.
+[`.env.example`](.env.example) defines generic `PUID`, `PGID`, `TZ`, and localhost port defaults. Copy it to the ignored `.env` only when local overrides are needed, and keep every machine-specific value there.
+
+### qBittorrent first login
+
+Start only qBittorrent with `docker compose up -d qbittorrent`, then inspect `docker compose logs qbittorrent` locally for the generated temporary password for the initial `admin` user. Sign in at `http://127.0.0.1:8080` (or the locally configured `QBITTORRENT_PORT`) and immediately replace the temporary login with a unique username and password in the Web UI settings. Until it is changed, qBittorrent generates a new temporary password on each start. Do not paste the log output into tickets or store the resulting credentials in Compose, `.env`, or any committed file.
+
+No indexers, feeds, trackers, or content sources are configured by this repository.
 
 ## Building Wit
 

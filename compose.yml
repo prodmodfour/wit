@@ -1,10 +1,31 @@
 name: wit
 
-# Application services are added by their own build tickets.
-services: {}
+services:
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:5.2.1
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      TZ: "${TZ:-Etc/UTC}"
+      WEBUI_PORT: "${QBITTORRENT_PORT:-8080}"
+    volumes:
+      - type: bind
+        source: "${WIT_DATA_ROOT:-./data}/config/qbittorrent"
+        target: /config
+      - type: bind
+        source: "${WIT_DATA_ROOT:-./data}/downloads"
+        target: /downloads
+    ports:
+      - "127.0.0.1:${QBITTORRENT_PORT:-8080}:${QBITTORRENT_PORT:-8080}"
+    networks:
+      - internal
+      - egress
 
 networks:
   internal:
     name: wit-internal
     driver: bridge
     internal: true
+  egress:
+    name: wit-egress
+    driver: bridge
