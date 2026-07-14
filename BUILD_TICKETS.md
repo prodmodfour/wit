@@ -105,7 +105,7 @@ Commit as one focused service commit.
 
 ## 004 — Add the Sonarr Compose service
 
-Status: TODO
+Status: DONE
 
 Add Sonarr without configuring acquisition sources.
 

@@ -21,6 +21,28 @@ services:
       - internal
       - egress
 
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:4.0.16
+    environment:
+      PUID: "${PUID:-1000}"
+      PGID: "${PGID:-1000}"
+      TZ: "${TZ:-Etc/UTC}"
+    volumes:
+      - type: bind
+        source: "${WIT_DATA_ROOT:-./data}/config/sonarr"
+        target: /config
+      - type: bind
+        source: "${WIT_DATA_ROOT:-./data}/downloads"
+        target: /downloads
+      - type: bind
+        source: "${WIT_DATA_ROOT:-./data}/television"
+        target: /tv
+    ports:
+      - "127.0.0.1:${SONARR_PORT:-8989}:8989"
+    networks:
+      - internal
+      - egress
+
 networks:
   internal:
     name: wit-internal

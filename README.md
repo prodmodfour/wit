@@ -44,7 +44,7 @@ Never commit a real `.env`, API key, credential, private hostname, machine-speci
 
 ## Compose services and storage
 
-[`compose.yml`](compose.yml) currently provides qBittorrent as the stack's default download client; the other application services remain planned. qBittorrent joins the isolated service network and a bridge used for outbound traffic. Its Web UI is available only on `127.0.0.1` by default. The Compose model validates without a real `.env`:
+[`compose.yml`](compose.yml) currently provides qBittorrent as the stack's default download client and Sonarr for television-library management; Jellyfin and Seerr remain planned. Both services join the isolated service network and a bridge used for outbound traffic. Their administrative interfaces are available only on `127.0.0.1` by default. The Compose model validates without a real `.env`:
 
 ```bash
 docker compose config
@@ -53,9 +53,10 @@ docker compose config
 All persistent bind-mounted data lives below one `WIT_DATA_ROOT` (default: the ignored `./data` directory) with this fixed layout:
 
 - `${WIT_DATA_ROOT}/config/qbittorrent/` for qBittorrent configuration
+- `${WIT_DATA_ROOT}/config/sonarr/` for Sonarr configuration
 - `${WIT_DATA_ROOT}/config/` for other per-service configuration added later
-- `${WIT_DATA_ROOT}/downloads/` for download-client data shared with Sonarr
-- `${WIT_DATA_ROOT}/television/` for the organised television library
+- `${WIT_DATA_ROOT}/downloads/` mounted at `/downloads` in both qBittorrent and Sonarr
+- `${WIT_DATA_ROOT}/television/` mounted at `/tv` in Sonarr for the organised television library
 
 [`.env.example`](.env.example) defines generic `PUID`, `PGID`, `TZ`, and localhost port defaults. Copy it to the ignored `.env` only when local overrides are needed, and keep every machine-specific value there.
 
@@ -63,7 +64,11 @@ All persistent bind-mounted data lives below one `WIT_DATA_ROOT` (default: the i
 
 Start only qBittorrent with `docker compose up -d qbittorrent`, then inspect `docker compose logs qbittorrent` locally for the generated temporary password for the initial `admin` user. Sign in at `http://127.0.0.1:8080` (or the locally configured `QBITTORRENT_PORT`) and immediately replace the temporary login with a unique username and password in the Web UI settings. Until it is changed, qBittorrent generates a new temporary password on each start. Do not paste the log output into tickets or store the resulting credentials in Compose, `.env`, or any committed file.
 
-No indexers, feeds, trackers, or content sources are configured by this repository.
+### Sonarr download-client setup
+
+After completing qBittorrent's first login, start Sonarr with `docker compose up -d sonarr` and open `http://127.0.0.1:8989` (or the locally configured `SONARR_PORT`). In Sonarr's download-client settings, add qBittorrent using the Compose service hostname `qbittorrent`, its Web UI port (`8080` by default, or the configured `QBITTORRENT_PORT`), and the credentials set through qBittorrent's Web UI. Do not use `localhost` as the qBittorrent hostname from inside Sonarr.
+
+Both containers see download data at `/downloads`, so a remote path mapping is not normally needed. Sonarr sees the television library at `/tv`; select that container path as its root folder through the Sonarr UI when setting up the library. The repository does not preconfigure download-client credentials, API keys, root folders, indexers, feeds, trackers, or content sources.
 
 ## Building Wit
 
