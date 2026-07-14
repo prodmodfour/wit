@@ -44,7 +44,7 @@ Never commit a real `.env`, API key, credential, private hostname, machine-speci
 
 ## Compose services and storage
 
-[`compose.yml`](compose.yml) currently provides qBittorrent as the stack's default download client and Sonarr for television-library management; Jellyfin and Seerr remain planned. Both services join the isolated service network and a bridge used for outbound traffic. Their administrative interfaces are available only on `127.0.0.1` by default. The Compose model validates without a real `.env`:
+[`compose.yml`](compose.yml) currently provides qBittorrent as the stack's default download client, Sonarr for television-library management, and Jellyfin as the completed-library browser and player; Seerr remains planned. All three services join the isolated service network and a bridge used for outbound traffic. Their web interfaces are available only on `127.0.0.1` by default. The Compose model validates without a real `.env`:
 
 ```bash
 docker compose config
@@ -54,9 +54,11 @@ All persistent bind-mounted data lives below one `WIT_DATA_ROOT` (default: the i
 
 - `${WIT_DATA_ROOT}/config/qbittorrent/` for qBittorrent configuration
 - `${WIT_DATA_ROOT}/config/sonarr/` for Sonarr configuration
+- `${WIT_DATA_ROOT}/config/jellyfin/` for Jellyfin configuration
+- `${WIT_DATA_ROOT}/cache/jellyfin/` for Jellyfin's separately persisted cache
 - `${WIT_DATA_ROOT}/config/` for other per-service configuration added later
 - `${WIT_DATA_ROOT}/downloads/` mounted at `/downloads` in both qBittorrent and Sonarr
-- `${WIT_DATA_ROOT}/television/` mounted at `/tv` in Sonarr for the organised television library
+- `${WIT_DATA_ROOT}/television/` mounted at `/tv` in Sonarr and read-only at `/tv` in Jellyfin
 
 [`.env.example`](.env.example) defines generic `PUID`, `PGID`, `TZ`, and localhost port defaults. Copy it to the ignored `.env` only when local overrides are needed, and keep every machine-specific value there.
 
@@ -69,6 +71,12 @@ Start only qBittorrent with `docker compose up -d qbittorrent`, then inspect `do
 After completing qBittorrent's first login, start Sonarr with `docker compose up -d sonarr` and open `http://127.0.0.1:8989` (or the locally configured `SONARR_PORT`). In Sonarr's download-client settings, add qBittorrent using the Compose service hostname `qbittorrent`, its Web UI port (`8080` by default, or the configured `QBITTORRENT_PORT`), and the credentials set through qBittorrent's Web UI. Do not use `localhost` as the qBittorrent hostname from inside Sonarr.
 
 Both containers see download data at `/downloads`, so a remote path mapping is not normally needed. Sonarr sees the television library at `/tv`; select that container path as its root folder through the Sonarr UI when setting up the library. The repository does not preconfigure download-client credentials, API keys, root folders, indexers, feeds, trackers, or content sources.
+
+### Jellyfin library setup and optional transcoding
+
+Start Jellyfin with `docker compose up -d jellyfin` and open `http://127.0.0.1:8096` (or the locally configured `JELLYFIN_PORT`). In the first-run wizard, add the television library from `/tv`. Compose mounts that path read-only so Jellyfin can catalogue and play completed episodes without modifying the media Sonarr manages. Jellyfin configuration and cache data are writable, separate bind mounts under `WIT_DATA_ROOT`.
+
+Hardware transcoding is optional and host-specific. The default service intentionally enables no GPU runtime or host devices. Follow Jellyfin's [hardware-acceleration documentation](https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/) and use the ignored local `compose.override.yml` if acceleration is needed. Grant only the required device: Linux VA-API or QSV hosts commonly use a render node such as `/dev/dri/renderD128`, while other hardware has different requirements. Verify device ownership and container-user access locally rather than committing a machine-specific mapping. The default service also publishes no discovery ports and does not use host networking.
 
 ## Building Wit
 

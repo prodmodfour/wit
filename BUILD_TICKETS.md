@@ -128,7 +128,7 @@ Commit as one focused service commit.
 
 ## 005 — Add the Jellyfin Compose service
 
-Status: TODO
+Status: DONE
 
 Add Jellyfin as the completed-library browser and player.
 

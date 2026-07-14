@@ -43,6 +43,28 @@ services:
       - internal
       - egress
 
+  jellyfin:
+    image: jellyfin/jellyfin:10.11.11
+    user: "${PUID:-1000}:${PGID:-1000}"
+    environment:
+      TZ: "${TZ:-Etc/UTC}"
+    volumes:
+      - type: bind
+        source: "${WIT_DATA_ROOT:-./data}/config/jellyfin"
+        target: /config
+      - type: bind
+        source: "${WIT_DATA_ROOT:-./data}/cache/jellyfin"
+        target: /cache
+      - type: bind
+        source: "${WIT_DATA_ROOT:-./data}/television"
+        target: /tv
+        read_only: true
+    ports:
+      - "127.0.0.1:${JELLYFIN_PORT:-8096}:8096"
+    networks:
+      - internal
+      - egress
+
 networks:
   internal:
     name: wit-internal
