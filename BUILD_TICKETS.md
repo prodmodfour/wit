@@ -216,7 +216,7 @@ Commit as one focused bootstrap-script commit.
 
 ## 009 — Add secure Wit configuration models
 
-Status: TODO
+Status: DONE
 
 Implement typed runtime configuration for the CLI.
 

@@ -42,6 +42,12 @@ Wit will not provide content sources, configure indexers, bypass DRM, extract su
 
 Never commit a real `.env`, API key, credential, private hostname, machine-specific path, or media-library data.
 
+## Wit runtime configuration
+
+The typed configuration layer now validates service URLs, Sonarr apply defaults, bounded HTTP timeouts, and the local XDG state path. Sonarr and Jellyfin API keys are accepted only through `WIT_*` environment values or an explicitly selected, owner-only TOML file; secret values are redacted from representations and configuration errors. No media command consumes these settings yet.
+
+See [`docs/configuration.md`](docs/configuration.md) for the complete variable list, protected-file format, precedence, validation rules, and the distinction from Compose's local `.env` file.
+
 ## Compose services and storage
 
 [`compose.yml`](compose.yml) provides qBittorrent as the stack's default download client, Sonarr for television-library management, Jellyfin as the completed-library browser and player, and Seerr as the human discovery and request interface. All four services join the isolated service network and a bridge used for outbound traffic. Their web interfaces are available only on `127.0.0.1` by default. The Compose model validates without a real `.env`:
