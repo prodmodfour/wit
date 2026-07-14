@@ -239,7 +239,7 @@ Commit as one focused configuration commit.
 
 ## 010 — Add the shared HTTP transport
 
-Status: TODO
+Status: DONE
 
 Implement one typed, testable transport used by service clients.
 
