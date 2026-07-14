@@ -262,7 +262,7 @@ Commit as one focused transport commit.
 
 ## 011 — Add service health clients
 
-Status: TODO
+Status: DONE
 
 Implement minimal read-only health/version clients.
 
