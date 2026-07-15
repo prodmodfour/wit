@@ -786,7 +786,7 @@ Commit as one focused agent-instructions commit.
 
 ## 034 — Complete installation and configuration documentation
 
-Status: TODO
+Status: DONE
 
 Turn `README.md` and configuration documentation into an accurate first-run guide.
 

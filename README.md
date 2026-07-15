@@ -19,9 +19,143 @@ Pi / operator -> wit CLI -> Sonarr -> download client -> TV library -> Jellyfin
 
 ## Status
 
-Wit is currently in early autonomous development, not a complete media application yet. The installable CLI supports `wit --help`, `wit --version`, the read-only `wit doctor` diagnostics, read-only `wit plan`, explicitly confirmed `wit apply`, and read-only `wit status`. The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md).
+Wit is a pre-1.0 project. Its core Compose stack and the complete `doctor` → `plan` → `apply` → `status` CLI workflow are implemented and covered by offline tests, but installation and service configuration are still manual. Wit intentionally does not configure acquisition sources, public access, or destructive media operations. Review [Implemented limitations and local-network assumptions](#implemented-limitations-and-local-network-assumptions) before relying on it.
 
-Each successful build ticket is deliberately sized for one focused conventional commit.
+The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md). Each successful build ticket is deliberately sized for one focused conventional commit.
+
+## Prerequisites
+
+Run Wit on a host that provides:
+
+- a local Linux-compatible environment with Bash and GNU `realpath` (the host bootstrap helper uses `realpath -m`)
+- Docker Engine with the Docker Compose v2 plugin and permission to run `docker compose`
+- Python 3.12 or newer and [uv](https://docs.astral.sh/uv/)
+- a Git checkout or source archive of this repository
+- enough local storage for service configuration, downloads, and the television library
+- a browser on the Docker host, or an independently secured way to reach its loopback-only web interfaces
+- outbound DNS/HTTPS for image pulls and TVmaze metadata, plus only those media sources the operator is authorised to use
+
+The default host ports `8080`, `8989`, `8096`, and `5055` must be free unless changed in the local `.env`. Check the required tools before continuing:
+
+```bash
+docker --version
+docker compose version
+python3 --version
+uv --version
+```
+
+All repository commands below are run from the repository root. The Compose stack uses Linux container paths and UID/GID-aware bind mounts; Docker Desktop and non-Linux hosts are not currently documented or tested by this project.
+
+## Install the CLI
+
+Install the locked project environment and verify the source checkout:
+
+```bash
+uv sync --locked
+uv run wit --version
+uv run wit --help
+```
+
+The examples below use `wit` for readability. Either prefix each command with `uv run` while working from the checkout, or install the command into an isolated uv tool environment:
+
+```bash
+uv tool install .
+wit --version
+```
+
+No published package or binary installer is provided yet; the repository checkout is the supported installation source.
+
+## First-run guide
+
+### 1. Prepare Compose settings and host storage
+
+The safe default uses the ignored repository-local `./data` directory and container UID/GID `1000`. Create every required bind-mount directory and copy the non-secret Compose template to an ignored `.env`:
+
+```bash
+scripts/bootstrap-host.sh --copy-env
+```
+
+If the data root or container identity must differ, pass the intended values to the helper, then edit `.env` to contain exactly the same values before starting Compose:
+
+```bash
+scripts/bootstrap-host.sh \
+  --copy-env \
+  --data-root /path/to/wit-data \
+  --puid "$(id -u)" \
+  --pgid "$(id -g)"
+```
+
+The helper copies `.env.example` unchanged; command-line overrides do **not** rewrite the copied values. It validates all target paths before creating anything, never overwrites an existing `.env`, and does not change ownership, start containers, or delete data. Arrange host permissions yourself when the selected container IDs differ from the directory owner. In particular, the Seerr image runs as UID `1000` by default and its config directory must be writable by that UID.
+
+Keep `.env` limited to the documented non-secret Compose values. API keys, qBittorrent credentials, Seerr logins, and source credentials do not belong there. See [Compose services and storage](#compose-services-and-storage) and the [complete Compose variable table](docs/configuration.md#compose-env-settings).
+
+Render and validate the final Compose model before pulling or starting anything:
+
+```bash
+docker compose config >/dev/null
+```
+
+### 2. Configure services in this order
+
+Set up one service at a time so credentials and paths exist before a dependent service needs them:
+
+1. [qBittorrent](#qbittorrent-first-login): start it, retrieve the generated temporary password locally, and replace the temporary login.
+2. [Sonarr](#sonarr-first-run-setup): enable its local authentication, add `/tv`, choose a quality profile, connect qBittorrent at `qbittorrent`, and manually configure only authorised acquisition sources. Record the Sonarr API key plus the numeric root-folder and quality-profile IDs for Wit.
+3. [Jellyfin](#jellyfin-library-setup-and-optional-transcoding): create the local administrator, add `/tv` as a television library, and create a dedicated Jellyfin API key for Wit.
+4. [Seerr](#seerr-discovery-and-request-setup): connect it to Jellyfin and Sonarr through their Compose service names after both are configured.
+
+Each detailed section includes the exact startup command and default local URL. When all first-run wizards are complete, reconcile the full stack and inspect container health:
+
+```bash
+docker compose up -d
+docker compose ps
+```
+
+A healthy container means its local HTTP endpoint responds; it does not prove that authentication, a download client, an acquisition source, or a library path is correctly configured.
+
+### 3. Configure Wit separately from Compose
+
+Wit does not read the repository `.env`. Create its state directory and an owner-only configuration file outside the repository:
+
+```bash
+mkdir -p "$HOME/.config/wit" "$HOME/.local/state/wit"
+chmod 700 "$HOME/.config/wit" "$HOME/.local/state/wit"
+touch "$HOME/.config/wit/config.toml"
+chmod 600 "$HOME/.config/wit/config.toml"
+```
+
+Populate that file using the [protected TOML template](docs/configuration.md#protected-toml-file), including the two service API keys and the numeric Sonarr defaults recorded above. From the host, use the published loopback URLs such as `http://127.0.0.1:8989`; Compose names such as `sonarr` work only between containers.
+
+Select the protected file by path, not by passing any credential on a command line:
+
+```bash
+export WIT_CONFIG_FILE="$HOME/.config/wit/config.toml"
+```
+
+It is safe to persist that path-only export in a shell profile. Keep the file itself outside the checkout, owner-only, and out of backups or logs that are not approved to contain secrets. [`docs/configuration.md`](docs/configuration.md) lists every CLI and Compose setting, precedence, validation rules, and where each secret belongs.
+
+### 4. Verify readiness and run the first request
+
+Run the read-only diagnostic before depending on any service:
+
+```bash
+wit doctor
+```
+
+Resolve every failed required check, then create a read-only plan and inspect every printed episode:
+
+```bash
+wit plan "Example Show" --first 4
+```
+
+Copy the generated plan ID from the output. In the commands below, `<plan-id>` means that exact value and is not literal shell syntax. Apply only after reviewing and affirmatively confirming that displayed plan, then inspect progress:
+
+```bash
+wit apply <plan-id>
+wit status <plan-id>
+```
+
+Interactive apply defaults to **no**. Non-interactive callers may use `--yes` only after receiving confirmation tied to the displayed plan. `--allow-stale` and `--allow-mismatch` are separate safety approvals, not routine flags. Use `--json` on any of these four commands when a versioned machine-readable result is required.
 
 ## Available diagnostics
 
@@ -202,17 +336,41 @@ docker compose ps seerr
 
 Start only qBittorrent with `docker compose up -d qbittorrent`, then inspect `docker compose logs qbittorrent` locally for the generated temporary password for the initial `admin` user. Sign in at `http://127.0.0.1:8080` (or the locally configured `QBITTORRENT_PORT`) and immediately replace the temporary login with a unique username and password in the Web UI settings. Until it is changed, qBittorrent generates a new temporary password on each start. Do not paste the log output into tickets or store the resulting credentials in Compose, `.env`, or any committed file.
 
-### Sonarr download-client setup
+### Sonarr first-run setup
 
-After completing qBittorrent's first login, start Sonarr with `docker compose up -d sonarr` and open `http://127.0.0.1:8989` (or the locally configured `SONARR_PORT`). In Sonarr's download-client settings, add qBittorrent using the Compose service hostname `qbittorrent`, its Web UI port (`8080` by default, or the configured `QBITTORRENT_PORT`), and the credentials set through qBittorrent's Web UI. Do not use `localhost` as the qBittorrent hostname from inside Sonarr.
+After completing qBittorrent's first login, start Sonarr and open its host-local interface:
 
-Both containers see download data at `/downloads`, so a remote path mapping is not normally needed. Sonarr sees the television library at `/tv`; select that container path as its root folder through the Sonarr UI when setting up the library. The repository does not preconfigure download-client credentials, API keys, root folders, indexers, feeds, trackers, or content sources.
+```bash
+docker compose up -d sonarr
+```
+
+The default URL is `http://127.0.0.1:8989`; use the locally configured `SONARR_PORT` when it differs. Complete Sonarr's authentication setup rather than leaving its administrative UI open without a login, even though Compose binds it only to loopback.
+
+In **Settings → Media Management**, add `/tv` as the root folder. Select or create an appropriate television quality profile in Sonarr. In **Settings → Download Clients**, add qBittorrent using:
+
+- host `qbittorrent` (not `localhost`)
+- Web UI port `8080`, or the configured `QBITTORRENT_PORT`
+- the credentials created in qBittorrent's Web UI
+
+Use Sonarr's connection test before saving. Both containers see download data at `/downloads`, so a remote path mapping is not normally needed. Sonarr alone owns completed-download handling and import into `/tv`; Wit does not control qBittorrent directly.
+
+#### Configure authorised sources manually
+
+Wit and this Compose file provide no indexer, tracker, feed, provider preset, or other acquisition source. In Sonarr's local **Settings → Indexers** interface, manually add only a source that you are authorised to use, following that source's official documentation and terms. Store any source credential only in Sonarr's persisted application configuration, use Sonarr's built-in connection test, and do not put it in Wit configuration, Compose `.env`, shell commands, tickets, or committed files.
+
+The project intentionally recommends no specific source and performs no automatic source setup. Without a working authorised source, service health checks can pass and Wit can submit a targeted search, but Sonarr will not be able to find releases.
+
+Before configuring the Wit CLI, create or identify a Sonarr API key and record the positive numeric IDs for the `/tv` root folder and selected quality profile. These IDs are API identities, not the path or profile name. Wit currently has no operator command that enumerates them; identify them through Sonarr's local administrative interface and official documentation rather than guessing. Wit validates both selections before adding a new series and fails safely if either is missing or the root folder is inaccessible. Put the API key only in the protected Wit TOML file or an inherited secret environment, as described in [`docs/configuration.md`](docs/configuration.md).
+
+The repository never preconfigures Sonarr authentication, API keys, root folders, download-client credentials, quality choices, or acquisition sources.
 
 ### Jellyfin library setup and optional transcoding
 
-Start Jellyfin with `docker compose up -d jellyfin` and open `http://127.0.0.1:8096` (or the locally configured `JELLYFIN_PORT`). In the first-run wizard, add the television library from `/tv`. Compose mounts that path read-only so Jellyfin can catalogue and play completed episodes without modifying the media Sonarr manages. Jellyfin configuration and cache data are writable, separate bind mounts under `WIT_DATA_ROOT`.
+Start Jellyfin with `docker compose up -d jellyfin` and open `http://127.0.0.1:8096` (or the locally configured `JELLYFIN_PORT`). Create a unique local administrator in the first-run wizard and add a television library rooted at `/tv`. Compose mounts that path read-only so Jellyfin can catalogue and play completed episodes without modifying the media Sonarr manages. Jellyfin configuration and cache data are writable, separate bind mounts under `WIT_DATA_ROOT`.
 
-Hardware transcoding is optional and host-specific. The default service intentionally enables no GPU runtime or host devices. Follow Jellyfin's [hardware-acceleration documentation](https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/) and use the ignored local `compose.override.yml` if acceleration is needed. Grant only the required device: Linux VA-API or QSV hosts commonly use a render node such as `/dev/dri/renderD128`, while other hardware has different requirements. Verify device ownership and container-user access locally rather than committing a machine-specific mapping. The default service also publishes no discovery ports and does not use host networking.
+After setup, create a dedicated API key for Wit from Jellyfin's administrator dashboard. Put that value only in the protected Wit TOML file or an inherited secret environment; do not put the administrator password or API key in Compose `.env`. Wit uses the API key for read-only health and library-visibility requests and never triggers a library scan.
+
+Hardware transcoding is optional and host-specific. The default service intentionally enables no GPU runtime or host devices. Follow Jellyfin's [hardware-acceleration documentation](https://jellyfin.org/docs/general/post-install/transcoding/hardware-acceleration/) and keep any host-specific Compose override untracked (for example, list `compose.override.yml` in `.git/info/exclude`) if acceleration is needed. Grant only the required device: Linux VA-API or QSV hosts commonly use a render node such as `/dev/dri/renderD128`, while other hardware has different requirements. Verify device ownership and container-user access locally rather than committing a machine-specific mapping. The default service also publishes no discovery ports and does not use host networking.
 
 ### Seerr discovery and request setup
 
@@ -220,9 +378,25 @@ Complete the first-run setup for Sonarr and Jellyfin before configuring Seerr. S
 
 In Seerr's setup wizard, connect Jellyfin at `http://jellyfin:8096` and Sonarr at `http://sonarr:8989`; these Compose service names work between containers. Supply the required login or API credentials only through the local first-run interfaces. No users, credentials, or API keys are preconfigured or stored in committed files.
 
-Seerr is the optional human discovery and request browser and hands approved series requests to Sonarr. It is not in Wit's episode-level plan/apply path: that planned CLI workflow communicates with Sonarr directly and does not depend on Seerr being available.
+Seerr is the human discovery and request browser and hands approved series requests to Sonarr. It is not in Wit's episode-level plan/apply path: that planned CLI workflow communicates with Sonarr directly. The current complete configuration and `wit doctor` diagnostics still require a Seerr URL and a healthy Seerr endpoint.
 
-## Building Wit
+## Implemented limitations and local-network assumptions
+
+- **Television only:** Wit does not automate movies. Planning selects aired, dated, regular episodes only; season zero, specials, future or otherwise unaired episodes, and undated episodes are excluded. There is no override that broadens those rules.
+- **Metadata identity required:** planning needs public TVmaze access and a confidently matched show with a TVDB ID. Ambiguous matches require an explicit TVmaze candidate ID. Wit does not silently fall back to a similarly named show.
+- **Manual service setup:** no users, authentication, root folders, quality choices, download-client credentials, acquisition sources, or Jellyfin libraries are provisioned. Wit also cannot currently list Sonarr root-folder or quality-profile IDs for the operator.
+- **Authorised sources only:** qBittorrent is only a download client. Sonarr needs a separately configured, lawful source before targeted searches can acquire anything. Wit neither verifies nor manages that source.
+- **Host-local administration:** every web port is bound to `127.0.0.1`. A browser on another LAN device cannot connect directly. The repository provides no TLS, reverse proxy, VPN, public exposure, or remote-access automation; operators must design and secure any non-local access separately.
+- **Host/container addressing differs:** host-run Wit uses published loopback URLs. The names `qbittorrent`, `sonarr`, and `jellyfin` resolve only between Compose containers. The supported setup assumes Wit runs on the Docker host, not in a container.
+- **Conservative Compose defaults:** qBittorrent's peer/listening port, Jellyfin discovery ports, host networking, and GPU devices are not exposed. Only the four administrative HTTP ports are published. Hardware transcoding and inbound peer connectivity require deliberate, untracked host-specific configuration.
+- **Complete CLI configuration:** every command validates the complete Sonarr, Jellyfin, and Seerr configuration even when that command uses only a subset. For example, planning contacts only TVmaze but still refuses an incomplete runtime configuration.
+- **Narrow mutations:** apply can add a series unmonitored, monitor mapped episodes, and submit one targeted Sonarr search. Wit does not cancel queues, delete media, trigger Jellyfin scans, change broad season monitoring, or control qBittorrent directly.
+- **Visibility is observational:** `wit status` trusts Sonarr import state and Jellyfin's current catalogue. It reports an imported episode as not yet visible until Jellyfin discovers it, but never forces a scan.
+- **Single-host, pre-1.0 operation:** the bind-mount/bootstrap flow is documented for a Linux-compatible local host. There is no multi-user tenancy, hosted service, migration utility, or published binary/package release.
+
+These are intentional first-release boundaries, not instructions to bypass safeguards. Operators remain responsible for service hardening, backups, source authorisation, and compliance with applicable law.
+
+## Development and autonomous build
 
 This repository was created from the autonomous-build template and retains its ticket-driven build tooling.
 
@@ -267,7 +441,7 @@ just monitor 10
 
 The autonomous loop must implement only the first `TODO` ticket, validate it, mark that ticket done, make one commit, and leave a clean tree.
 
-## Planned technology
+## Technology
 
 - Python 3.12+
 - Typer, httpx, and Pydantic

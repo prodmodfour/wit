@@ -1,33 +1,79 @@
-# Wit runtime configuration
+# Wit configuration
 
-Wit's typed configuration layer reads runtime values from the process environment or from one explicitly selected TOML file. It does not discover a repository `.env` file and does not accept credentials as CLI arguments. The read-only `wit doctor`, `wit plan`, and `wit status` commands and the explicitly confirmed `wit apply` command consume these settings.
+Wit has two independent configuration domains. Do not assume that a value supplied to one is visible to the other:
 
-## Environment settings
+| Configuration | Consumer | Contents | Secret-bearing? |
+| --- | --- | --- | --- |
+| repository `.env` | Docker Compose interpolation | data root, container identity, timezone, and host ports | no; keep it non-secret |
+| protected TOML or inherited `WIT_*` environment | the `wit` CLI | service URLs, Sonarr defaults, API keys, timeouts, and state path | yes; contains Sonarr and Jellyfin API keys |
+| each service's persisted config below `WIT_DATA_ROOT` | qBittorrent, Sonarr, Jellyfin, or Seerr | users, service integrations, and service-owned credentials | yes; manage it through the service UI |
 
-Set individual values in the environment before invoking Wit:
+The CLI never discovers the repository `.env`, never accepts credentials as command options, and never stores credentials in plans. It reads runtime values from one explicitly selected owner-only TOML file, the process environment, or both. The protected TOML file is recommended for a persistent local installation.
 
-| Variable | Required | Meaning |
-| --- | --- | --- |
-| `WIT_SONARR_URL` | yes | Sonarr base URL |
-| `WIT_SONARR_API_KEY` | yes | Sonarr API key; treated as a secret |
-| `WIT_SONARR_ROOT_FOLDER_ID` | yes | Positive Sonarr root-folder ID used by apply |
-| `WIT_SONARR_QUALITY_PROFILE_ID` | yes | Positive Sonarr quality-profile ID used by apply |
-| `WIT_JELLYFIN_URL` | yes | Jellyfin base URL |
-| `WIT_JELLYFIN_API_KEY` | yes | Jellyfin API key; treated as a secret |
-| `WIT_SEERR_URL` | yes | Seerr base URL |
-| `WIT_TVMAZE_URL` | no | TVmaze base URL; defaults to `https://api.tvmaze.com` |
-| `WIT_HTTP_CONNECT_TIMEOUT_SECONDS` | no | Connect timeout from 0.1 through 60 seconds; defaults to 5 |
-| `WIT_HTTP_READ_TIMEOUT_SECONDS` | no | Read timeout from 0.1 through 120 seconds; defaults to 30 |
-| `WIT_STATE_DIR` | no | Absolute local state directory |
-| `WIT_CONFIG_FILE` | no | Absolute path to the protected TOML file described below |
+See the [`README` first-run guide](../README.md#first-run-guide) for host preparation and service setup order.
 
-Sonarr and Jellyfin need API keys for the API operations Wit will perform. TVmaze's metadata API and the Seerr health endpoint used by Wit do not require credentials, so no TVmaze or Seerr credential is modelled.
+## CLI runtime settings
 
-When `WIT_STATE_DIR` is absent, Wit uses `${XDG_STATE_HOME}/wit`. If `XDG_STATE_HOME` is unset, the fallback is `~/.local/state/wit`. A state path may not be relative, a filesystem root, a symbolic link, an existing non-directory, or contain `..` traversal.
+Every current CLI command loads and validates the **complete** runtime configuration before doing command-specific work. Therefore every row marked “required” must be supplied even though `plan`, for example, contacts only TVmaze.
+
+| Variable | Requirement/default | Secret? | Meaning |
+| --- | --- | --- | --- |
+| `WIT_SONARR_URL` | required | no | Sonarr base URL as reached by the host-run CLI |
+| `WIT_SONARR_API_KEY` | required | **yes** | Sonarr API key used for health, library, apply, and status operations |
+| `WIT_SONARR_ROOT_FOLDER_ID` | required | no | Positive numeric Sonarr root-folder ID used when adding a series |
+| `WIT_SONARR_QUALITY_PROFILE_ID` | required | no | Positive numeric Sonarr quality-profile ID used when adding a series |
+| `WIT_JELLYFIN_URL` | required | no | Jellyfin base URL as reached by the host-run CLI |
+| `WIT_JELLYFIN_API_KEY` | required | **yes** | Dedicated Jellyfin API key used for health and read-only library lookup |
+| `WIT_SEERR_URL` | required | no | Seerr base URL used for its credential-free health endpoint |
+| `WIT_TVMAZE_URL` | `https://api.tvmaze.com` | no | Read-only TVmaze metadata API base URL |
+| `WIT_HTTP_CONNECT_TIMEOUT_SECONDS` | `5`; range 0.1–60 | no | Shared HTTP connection timeout in seconds |
+| `WIT_HTTP_READ_TIMEOUT_SECONDS` | `30`; range 0.1–120 | no | Shared HTTP response-read timeout in seconds |
+| `WIT_STATE_DIR` | XDG-derived path | no | Absolute single-user state directory after `~` expansion |
+| `WIT_CONFIG_FILE` | unset | no (path only) | Absolute path, after `~` expansion, to the protected TOML file |
+
+These are all supported CLI runtime environment settings. Unknown TOML fields are rejected; there are no undocumented TVmaze, Seerr, qBittorrent, source, or download-client credential settings.
+
+From the Docker host, the default service URLs are `http://127.0.0.1:8989` for Sonarr, `http://127.0.0.1:8096` for Jellyfin, and `http://127.0.0.1:5055` for Seerr. Use locally changed host ports when applicable. Compose names such as `sonarr` and `jellyfin` resolve between containers, not from a host-run CLI.
+
+Service URLs must use `http` or `https` and include a host. Reverse-proxy path prefixes are supported, but credentials, query strings, and fragments in a base URL are rejected. Sonarr root-folder and quality-profile values are positive API IDs, not a filesystem path or profile name. Configure `/tv` and the profile in Sonarr first, then identify their numeric IDs through Sonarr's local administrative interface and official documentation. Wit currently cannot enumerate those choices; it validates them before adding a new series and refuses an absent or inaccessible selection.
+
+When `WIT_STATE_DIR` is absent, Wit uses `${XDG_STATE_HOME}/wit`. `XDG_STATE_HOME` must resolve to an absolute path. If it is unset, the fallback is `~/.local/state/wit`. A state path may not be relative after expansion, a filesystem root, a symbolic link, an existing non-directory, or contain `..` traversal.
 
 Download plans are persisted as inspectable JSON at `<state-dir>/plans/<plan-id>.json`. The persistence layer creates the Wit and `plans` directories with mode `0700`, writes plan files with mode `0600`, and atomically replaces only complete files. It refuses traversal-style IDs, plan or directory symlinks, non-regular files, mismatched IDs, corrupt JSON, and unsupported plan schema versions. Listing considers only valid plan-shaped JSON filenames and does not return unrelated state-directory entries. `wit plan` renders the complete plan before writing it to this store and prints the saved plan ID afterward.
 
-Service URLs must use `http` or `https` and include a host. Reverse-proxy path prefixes are supported, but credentials, query strings, and fragments in a base URL are rejected. Keep API keys in the environment itself, not in shell command arguments or shell history.
+## Where credentials and other secrets belong
+
+| Secret | Create/manage it in | Additional Wit placement |
+| --- | --- | --- |
+| qBittorrent Web UI login | qBittorrent's local Web UI; persisted in its service config | none; Wit never talks to qBittorrent |
+| Sonarr login and API key | Sonarr's local administrative UI; persisted in Sonarr config | copy only the API key into protected TOML or a trusted inherited environment |
+| authorised source credentials | Sonarr's local indexer/source settings | none; Wit does not configure or consume them |
+| Jellyfin administrator login and API key | Jellyfin's local administrator UI; persisted in Jellyfin config | copy only a dedicated API key into protected TOML or a trusted inherited environment |
+| Seerr login and upstream credentials | Seerr's local first-run/settings UI; persisted in Seerr config | none; Wit uses only Seerr's credential-free health endpoint |
+
+Never put these values in the repository `.env`, Compose YAML, CLI arguments, plan JSON, shell command lines, issue output, or committed files. If environment-based API keys are necessary, inject them into the `wit` process from a trusted local secret manager or protected service environment rather than typing inline assignments into shell history. Wit redacts typed secret fields and reports validation failures by field name, but that does not make an unsafe storage location safe.
+
+## First runtime setup
+
+1. Complete qBittorrent, Sonarr, Jellyfin, and Seerr first-run setup in the order documented in the README.
+2. In Sonarr, configure `/tv`, a quality profile, qBittorrent, and only authorised sources; record the root-folder ID, quality-profile ID, and API key.
+3. In Jellyfin, configure `/tv` as television media and create a dedicated API key for Wit.
+4. Create owner-only configuration and state locations:
+
+   ```bash
+   mkdir -p "$HOME/.config/wit" "$HOME/.local/state/wit"
+   chmod 700 "$HOME/.config/wit" "$HOME/.local/state/wit"
+   touch "$HOME/.config/wit/config.toml"
+   chmod 600 "$HOME/.config/wit/config.toml"
+   ```
+
+5. Fill in the [protected TOML file](#protected-toml-file), then select its path:
+
+   ```bash
+   export WIT_CONFIG_FILE="$HOME/.config/wit/config.toml"
+   ```
+
+6. Run `wit doctor` and resolve every required failure before planning or applying a request.
 
 ## Diagnose configuration and connectivity
 
@@ -125,8 +171,8 @@ state_dir = "~/.local/state/wit"
 [sonarr]
 url = "http://127.0.0.1:8989"
 api_key = "<sonarr-api-key>"
-root_folder_id = 1
-quality_profile_id = 1
+root_folder_id = 1      # Replace with the numeric ID for the configured /tv root
+quality_profile_id = 1  # Replace with the numeric ID for the chosen profile
 
 [jellyfin]
 url = "http://127.0.0.1:8096"
@@ -151,4 +197,31 @@ chmod 600 "$HOME/.config/wit/config.toml"
 
 Individual `WIT_*` environment settings override the corresponding TOML values. Passing a config path directly to the Python configuration loader overrides `WIT_CONFIG_FILE` when embedding Wit, but the file permission and ownership checks still apply. Invalid settings are reported by field name without including input values, and secret fields use Pydantic's redacted representation.
 
-The root repository `.env` remains for local Docker Compose overrides. Wit deliberately does not load it as runtime CLI configuration, and real credentials must never be committed there or anywhere else in the repository.
+## Compose `.env` settings
+
+The repository `.env` is an ignored, host-specific Docker Compose interpolation file. [`.env.example`](../.env.example) defines every supported value:
+
+| Variable | Default | Secret? | Meaning |
+| --- | --- | --- | --- |
+| `WIT_DATA_ROOT` | `./data` | no | Host root for all service config, cache, downloads, and television data |
+| `PUID` | `1000` | no | Host UID used by qBittorrent and Sonarr and as Jellyfin's container user |
+| `PGID` | `1000` | no | Host GID used by qBittorrent and Sonarr and as Jellyfin's container group |
+| `TZ` | `Etc/UTC` | no | Container timezone setting |
+| `QBITTORRENT_PORT` | `8080` | no | qBittorrent Web UI host port and container Web UI port |
+| `SONARR_PORT` | `8989` | no | Host port mapped to Sonarr container port `8989` |
+| `JELLYFIN_PORT` | `8096` | no | Host port mapped to Jellyfin container port `8096` |
+| `SEERR_PORT` | `5055` | no | Host port mapped to Seerr container port `5055` |
+
+These are all supported Compose environment settings. Despite its prefix, `WIT_DATA_ROOT` is not a CLI runtime setting. Conversely, Compose does not consume `WIT_SONARR_URL`, `WIT_JELLYFIN_API_KEY`, or any other CLI setting.
+
+Create the file and storage tree with:
+
+```bash
+scripts/bootstrap-host.sh --copy-env
+```
+
+The helper gives a newly copied `.env` mode `0600` but leaves an existing file untouched. Its `--data-root`, `--puid`, and `--pgid` options validate values for directory creation; they do not edit `.env.example` or `.env`. When using overrides, put the same values in `.env` before `docker compose config` or `docker compose up`.
+
+`WIT_DATA_ROOT` may be relative to the repository or an absolute host path, but it must not be empty, `/`, the repository root, a non-directory, or resolve through a child symlink outside the selected root. `PUID` and `PGID` must be positive decimal IDs; the bootstrap helper accepts values from 1 through 4294967294. Seerr does not consume these identity variables and runs as UID `1000` in the pinned image, so its config directory must separately be writable by that UID.
+
+Compose binds all four administrative ports to `127.0.0.1`, regardless of the selected port numbers. It does not use `.env` to provision users or credentials. Keep qBittorrent logins, Sonarr authentication and source credentials, Jellyfin credentials, and Seerr upstream credentials in their service-owned configuration as described above. Wit deliberately does not load `.env` as runtime CLI configuration, and real credentials must never be committed there or anywhere else in the repository.
