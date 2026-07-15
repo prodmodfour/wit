@@ -1,55 +1,36 @@
-# Usage
+# Wit autonomous build operations
 
-## 1. Create a new project from this template
+This document covers the retained maintainer build harness. It is not the runtime guide for media requests; operators and Pi should follow the [`wit` workflow in the README](../README.md#first-run-guide) and `AGENTS.md`.
 
-Use GitHub's template feature, or copy this repository manually.
+## 1. Read the Wit build contract
 
-## 2. Customise the project brief
-
-Edit `PROJECT_BRIEF.md`.
-
-Set:
+Before any implementation cycle, read these files completely:
 
 ```text
-TEMPLATE_CUSTOMISED: true
+AGENTS.md
+PROJECT_BRIEF.md
+BUILD_TICKETS.md
 ```
 
-Fill in:
+`PROJECT_BRIEF.md` defines the product and safety boundaries. `BUILD_TICKETS.md` is the ordered implementation queue. `AGENTS.md` defines both the one-ticket build workflow and the supported runtime control surface.
 
-* project name
-* project type
-* project goal
-* audience
-* success criteria
-* non-goals
-* technology preferences
-* architecture expectations
-* quality expectations
-* documentation expectations
-* safety constraints
+## 2. Select work from the existing queue
 
-## 3. Replace the tickets
+The loop uses file order: the first ticket heading with `Status: TODO` is next. Do not skip it, combine adjacent tickets, or rewrite completed ticket descriptions. Keep the top-level automation status unchanged until the explicit final review ticket.
 
-Edit `BUILD_TICKETS.md`.
+When a genuinely new requirement is approved, follow [changing Wit scope safely](CUSTOMISING.md) and [the ticket-writing guide](TICKET_WRITING.md). Add a new small, ordered, testable ticket rather than replacing Wit's project brief or existing history.
 
-Keep the top-level line:
+## 3. Prepare a clean maintainer checkout
 
-```text
-AUTOMATION_STATUS: NOT_DONE
+The loop requires a clean working tree and a branch that is not behind its upstream. Install the locked development environment and run the quality gate before starting a long autonomous run:
+
+```bash
+uv sync --locked --all-groups
+scripts/quality-gate.sh
+git status --short --branch
 ```
 
-Then replace the example tickets with project-specific tickets. Keep tickets limited to descriptions plus a `Status: TODO` or `Status: DONE` line; do not use the ticket file for cycle notes or blocker commentary.
-
-Supported `##` ticket headings include numeric IDs (`## 003 — ...`), plain labels (`## Ticket 3 — ...`), and prefixed IDs containing a number (`## LP-S5-003 — ...`). The build loop preserves the displayed ID and uses file order: the first ticket heading with `Status: TODO` is next.
-
-Good tickets are:
-
-* small
-* ordered
-* testable
-* clear about expected files/behaviour
-* clear about docs and validation
-* scoped to one change
+Do not place real `.env` files, protected Wit configuration, plans, media metadata, or build-loop event logs in the checkout. Build-loop state is stored outside the repository and must remain private.
 
 ## 4. Preview script output formatting
 

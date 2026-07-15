@@ -1,8 +1,6 @@
-# Wit Autonomous Build Configuration
+# Changing Wit scope safely
 
-Wit was initialised from the Autonomous Build Template and is already customised.
-
-The source of truth for the build is:
+Wit's product scope, architecture, and safety constraints are already defined. The source of truth for implementation work is:
 
 ```text
 PROJECT_BRIEF.md
@@ -10,15 +8,16 @@ BUILD_TICKETS.md
 AGENTS.md
 ```
 
-Do not replace the queue with broad feature requests. Every successful ticket must remain small enough for one focused conventional commit and must leave the quality gate passing.
+Do not replace the queue with broad feature requests or use a completed ticket description to conceal a later scope change. Every successful ticket must remain small enough for one focused conventional commit, include its required tests and documentation, pass `scripts/quality-gate.sh`, and leave a clean working tree.
 
-To change scope before implementation:
+To propose a scope change before implementation:
 
-1. update `PROJECT_BRIEF.md`
-2. split the change into ordered, testable tickets in `BUILD_TICKETS.md`
-3. make the planning change as its own reviewed commit
-4. run `scripts/quality-gate.sh`
+1. explain and review the change against `PROJECT_BRIEF.md`, including non-goals and safety boundaries;
+2. update the brief only when the product contract genuinely changes;
+3. add new ordered, independently testable tickets to `BUILD_TICKETS.md` without rewriting completed history;
+4. make the planning change as its own reviewed commit; and
+5. run `scripts/quality-gate.sh`.
 
-Do not edit completed ticket descriptions to conceal scope changes. Add a new ticket instead.
+Do not silently broaden Wit into movie automation, public hosting, source/indexer provisioning, direct qBittorrent control, DRM workarounds, destructive cleanup, or arbitrary command execution. A proposed change that crosses those boundaries needs explicit project-level review, not an implementation shortcut.
 
-The generic loop scripts are intentionally retained. See [`USAGE.md`](USAGE.md) for loop controls and [`TICKET_WRITING.md`](TICKET_WRITING.md) for ticket structure.
+The autonomous loop scripts are intentionally retained for maintainers. See [autonomous build operations](USAGE.md), [ticket writing](TICKET_WRITING.md), and [build safety](SAFETY.md).

@@ -45,4 +45,4 @@ Operators should:
 * review plans before applying them
 * back up service configuration and media metadata before upgrades
 
-Detailed threat modelling and operational guidance will be added during the documented build tickets.
+See [`docs/security.md`](docs/security.md) for the implemented threat model, secret and state-file controls, network posture, and responsible-use boundaries. See [`docs/operations.md`](docs/operations.md) for backup, restore, update, and non-destructive recovery procedures.

@@ -1,13 +1,13 @@
-# Safety Notes
+# Autonomous build safety
 
-This template is designed to reduce the risk of autonomous build mistakes.
+Wit's retained maintainer harness is designed to reduce the risk of autonomous build mistakes. These controls supplement, rather than replace, the product safety rules in `AGENTS.md` and `PROJECT_BRIEF.md`.
 
 ## Built-in safety behaviours
 
 The build loop:
 
 * refuses to start with a dirty working tree
-* refuses uncustomised templates by default
+* requires the project brief's completed customisation marker by default
 * locks to avoid concurrent runs and refuses to overwrite or release state after lock ownership is lost
 * supports graceful stop requests without terminating an active agent or skipping successful publication
 * checks upstream before and after each cycle, while allowing branches that are already ahead of upstream
@@ -57,7 +57,7 @@ Before making a repo public, manually review:
 
 `scripts/create-remote-repo.sh` can create GitHub or GitLab repositories using the authenticated `gh` or `glab` CLI. It requires a clean working tree for non-dry runs, refuses to overwrite an existing local remote unless `--replace-remote` is passed, and supports `--dry-run` for previewing commands.
 
-Review visibility (`private`, `public`, or `internal`) before creating a repository, especially before pushing template-derived or newly generated code.
+Review visibility (`private`, `public`, or `internal`) before creating a repository, especially before pushing autonomous or newly generated changes.
 
 Build-loop PR/MR automation is opt-in. `--pr-each-cycle` creates or reuses a PR/MR after each successful cycle, and `--merge-pr-each-cycle` creates and immediately merges it. Use a work branch that differs from the base branch, and make sure branch protection, required checks, and merge permissions match the level of autonomy you want.
 

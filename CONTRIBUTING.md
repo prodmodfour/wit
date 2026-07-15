@@ -37,7 +37,7 @@ Run:
 scripts/quality-gate.sh
 ```
 
-The gate checks shell scripts, autonomous-build regressions, secret/private-file guardrails, and—once implemented—Python and Docker Compose validation.
+The gate checks shell syntax and regression tests, secret/private-file guardrails, Ruff formatting and linting, mypy, pytest, the package environment, and Docker Compose configuration without starting services.
 
 ## Commit and pull-request style
 

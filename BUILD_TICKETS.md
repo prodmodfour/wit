@@ -807,7 +807,7 @@ Commit as one focused documentation commit.
 
 ## 035 — Complete architecture, operations, security, and troubleshooting docs
 
-Status: TODO
+Status: DONE
 
 Add the maintainer/operator reference documentation.
 

@@ -23,6 +23,17 @@ Wit is a pre-1.0 project. Its core Compose stack and the complete `doctor` → `
 
 The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md). Each successful build ticket is deliberately sized for one focused conventional commit.
 
+## Documentation
+
+- [Configuration reference](docs/configuration.md) — CLI settings, Compose variables, protected files, and credentials
+- [Architecture](docs/architecture.md) — component authority, command data flows, storage, networking, and failure boundaries
+- [Operations](docs/operations.md) — startup, shutdown, backup, restore, updates, and non-destructive recovery
+- [Security model](docs/security.md) — threat model, secrets, network exposure, state safety, and responsible use
+- [Troubleshooting](docs/troubleshooting.md) — permissions, authentication, paths, health, queues, and Jellyfin visibility
+- [Security reporting policy](SECURITY.md) and [contribution guide](CONTRIBUTING.md)
+
+Start with the [first-run guide](#first-run-guide), then use the references above for maintenance. The service and CLI operations in these documents preserve the boundaries summarized below; they do not provide acquisition sources or public deployment automation.
+
 ## Prerequisites
 
 Run Wit on a host that provides:
@@ -398,7 +409,7 @@ These are intentional first-release boundaries, not instructions to bypass safeg
 
 ## Development and autonomous build
 
-This repository was created from the autonomous-build template and retains its ticket-driven build tooling.
+Wit retains a ticket-driven autonomous build harness for maintainers. Product scope is already defined; changes must follow the project brief and the first `TODO` ticket rather than treating the repository as a blank project generator. See [changing Wit scope safely](docs/CUSTOMISING.md), [autonomous build operations](docs/USAGE.md), and the [build safety notes](docs/SAFETY.md).
 
 Required reading for an implementation cycle:
 
