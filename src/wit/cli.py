@@ -1,14 +1,28 @@
 """Command-line entry point for Wit."""
 
 import asyncio
+import re
+from datetime import UTC, datetime
 from typing import Annotated
 
 import typer
 
 from wit import __version__
-from wit.clients import ServiceHealthResult, ServiceHealthState, ServiceName
-from wit.config import ConfigurationError, load_settings
+from wit.clients import ServiceHealthResult, ServiceHealthState, ServiceName, TvmazeClient
+from wit.config import ConfigurationError, WitSettings, load_settings
 from wit.doctor import DoctorReport, LocalPathCheck, LocalPathState, run_doctor
+from wit.errors import WitError
+from wit.plan_store import PlanStore
+from wit.planning import (
+    ShowCandidateSelectionRequiredError,
+    build_download_plan,
+    generate_plan_identifier,
+)
+from wit.plans import DownloadPlan
+from wit.selection import EpisodeSelector, InvalidEpisodeSelectorError
+
+_MAX_EPISODE_COORDINATE = 2_147_483_647
+_EPISODE_RANGE_PATTERN = re.compile(r"([1-9][0-9]{0,9})-([1-9][0-9]{0,9})\Z")
 
 app = typer.Typer(
     help="Safe, local-first television library operations.",
@@ -36,6 +50,194 @@ def main(
     ] = False,
 ) -> None:
     """Run Wit television library operations."""
+
+
+@app.command("plan")
+def plan_command(
+    query: Annotated[
+        str,
+        typer.Argument(help="Show title to resolve through read-only TVmaze metadata."),
+    ],
+    first: Annotated[
+        int | None,
+        typer.Option(
+            "--first",
+            min=1,
+            max=_MAX_EPISODE_COORDINATE,
+            help="Select the first N aired regular episodes.",
+        ),
+    ] = None,
+    season: Annotated[
+        int | None,
+        typer.Option(
+            "--season",
+            min=1,
+            max=_MAX_EPISODE_COORDINATE,
+            help="Limit --first or --episodes to this season.",
+        ),
+    ] = None,
+    episode_range: Annotated[
+        str | None,
+        typer.Option(
+            "--episodes",
+            metavar="START-END",
+            help="Select an inclusive aired episode range; requires --season.",
+        ),
+    ] = None,
+    all_aired: Annotated[
+        bool,
+        typer.Option("--all-aired", help="Select all currently aired regular episodes."),
+    ] = False,
+    year: Annotated[
+        int | None,
+        typer.Option(
+            "--year",
+            min=1,
+            max=9999,
+            help="Use a premiere year only to disambiguate matching titles.",
+        ),
+    ] = None,
+    candidate: Annotated[
+        int | None,
+        typer.Option(
+            "--candidate",
+            min=1,
+            max=_MAX_EPISODE_COORDINATE,
+            metavar="TVMAZE-ID",
+            help="Explicitly select a TVmaze ID from an ambiguous candidate list.",
+        ),
+    ] = None,
+) -> None:
+    """Create and save a read-only, inspectable episode download plan."""
+    selector = _build_episode_selector(
+        first=first,
+        season=season,
+        episode_range=episode_range,
+        all_aired=all_aired,
+    )
+
+    try:
+        settings = load_settings()
+    except ConfigurationError as error:
+        typer.echo(f"Planning failed: {error}")
+        typer.echo(
+            "Next step: set the required WIT_* values or WIT_CONFIG_FILE; "
+            "see docs/configuration.md."
+        )
+        raise typer.Exit(code=1) from None
+
+    try:
+        plan = asyncio.run(
+            _build_read_only_plan(
+                settings,
+                query=query,
+                selector=selector,
+                show_year=year,
+                candidate_tvmaze_id=candidate,
+            )
+        )
+    except ShowCandidateSelectionRequiredError as error:
+        _render_show_candidates(error)
+        raise typer.Exit(code=1) from None
+    except WitError as error:
+        typer.echo(f"Planning failed: {error}")
+        raise typer.Exit(code=1) from None
+
+    # The complete immutable plan is deliberately rendered before persistence.
+    typer.echo(plan.render())
+    try:
+        PlanStore(settings.state_dir).save(plan)
+    except WitError as error:
+        typer.echo(f"Planning failed: {error}")
+        raise typer.Exit(code=1) from None
+    typer.echo(f"Saved plan ID: {plan.plan_id}")
+
+
+async def _build_read_only_plan(
+    settings: WitSettings,
+    *,
+    query: str,
+    selector: EpisodeSelector,
+    show_year: int | None,
+    candidate_tvmaze_id: int | None,
+) -> DownloadPlan:
+    async with _create_tvmaze_client(settings) as client:
+        return await build_download_plan(
+            client,
+            query=query,
+            selector=selector,
+            show_year=show_year,
+            candidate_tvmaze_id=candidate_tvmaze_id,
+            clock=_utc_now,
+            plan_identifier_factory=generate_plan_identifier,
+        )
+
+
+def _create_tvmaze_client(settings: WitSettings) -> TvmazeClient:
+    return TvmazeClient(
+        base_url=str(settings.tvmaze.url),
+        connect_timeout_seconds=settings.http.connect_timeout_seconds,
+        read_timeout_seconds=settings.http.read_timeout_seconds,
+    )
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _build_episode_selector(
+    *,
+    first: int | None,
+    season: int | None,
+    episode_range: str | None,
+    all_aired: bool,
+) -> EpisodeSelector:
+    range_start: int | None = None
+    range_end: int | None = None
+    if episode_range is not None:
+        match = _EPISODE_RANGE_PATTERN.fullmatch(episode_range)
+        if match is None:
+            raise typer.BadParameter(
+                "--episodes must use the positive inclusive form START-END",
+                param_hint="--episodes",
+            )
+        range_start, range_end = (int(value) for value in match.groups())
+        if range_start > _MAX_EPISODE_COORDINATE or range_end > _MAX_EPISODE_COORDINATE:
+            raise typer.BadParameter(
+                f"--episodes values must not exceed {_MAX_EPISODE_COORDINATE}",
+                param_hint="--episodes",
+            )
+
+    try:
+        return EpisodeSelector(
+            first_count=first,
+            season_number=season,
+            range_start=range_start,
+            range_end=range_end,
+            all_aired=all_aired,
+        )
+    except InvalidEpisodeSelectorError as error:
+        raise typer.BadParameter(str(error), param_hint="episode selector") from None
+
+
+def _render_show_candidates(error: ShowCandidateSelectionRequiredError) -> None:
+    typer.echo(f"Planning failed: {error}")
+    typer.echo("Candidates:")
+    for candidate in error.candidates:
+        show = candidate.show
+        year = str(show.premiere_year) if show.premiere_year is not None else "year unknown"
+        tvdb_id = str(show.tvdb_id) if show.tvdb_id is not None else "missing"
+        typer.echo(
+            f"  TVmaze ID {show.tvmaze_id}: {_safe_terminal_text(show.title)} "
+            f"({year}); TVDB ID {tvdb_id}"
+        )
+    typer.echo("Retry with --candidate <TVMAZE-ID> from this list.")
+
+
+def _safe_terminal_text(value: str) -> str:
+    return "".join(
+        character if ord(character) >= 32 and ord(character) != 127 else "?" for character in value
+    )
 
 
 @app.command()

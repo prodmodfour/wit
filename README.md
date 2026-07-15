@@ -19,7 +19,7 @@ Pi / operator -> wit CLI -> Sonarr -> download client -> TV library -> Jellyfin
 
 ## Status
 
-Wit is currently in early autonomous development, not a working media application yet. The installable CLI supports `wit --help`, `wit --version`, and the read-only `wit doctor` diagnostics described below; planning, apply, and status commands remain planned. The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md).
+Wit is currently in early autonomous development, not a complete media application yet. The installable CLI supports `wit --help`, `wit --version`, the read-only `wit doctor` diagnostics, and the read-only `wit plan` workflow described below; apply and status commands remain planned. The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md).
 
 Each successful build ticket is deliberately sized for one focused conventional commit.
 
@@ -33,17 +33,35 @@ wit doctor
 
 `wit doctor` validates configuration before making network requests, checks that the state directory exists with read, write, and search access, and reports Sonarr, Jellyfin, and Seerr health independently. It does not create directories or mutate services. The command exits with status `0` only when every required check passes and status `1` when configuration, a local path, or a service check fails. Diagnostic output names settings that need attention but never prints API credentials.
 
-## Intended media workflow
+## Read-only planning
 
-Once the remaining commands are implemented, examples will look like:
+`wit plan` searches public TVmaze metadata, resolves a show, selects aired regular episodes, prints the complete plan, and only then saves its secret-free JSON under the configured state directory. It does not contact or mutate Sonarr, search for downloads, or apply the plan.
+
+Supply exactly one primary selector:
 
 ```bash
 wit plan "Example Show" --first 4
+wit plan "Example Show" --first 3 --season 2
+wit plan "Example Show" --season 2 --episodes 3-6
+wit plan "Example Show" --all-aired
+```
+
+`--first N` uses season/episode order and may be limited to one positive `--season`. `--episodes START-END` is an inclusive range and requires `--season`. `--all-aired` cannot be combined with another selector or a season. Every rule excludes season zero, specials, future episodes, and undated episodes by default.
+
+Wit chooses a show automatically only for a confident deterministic title match. An ambiguous result exits without fetching episodes or writing a plan and prints ordered TVmaze candidate IDs; retry with the displayed ID, for example `--candidate 123`. `--year YYYY` may disambiguate matching remakes, but never turns an inexact title into an automatic match. A selected show must have a TVDB ID so a future apply operation can map it safely to Sonarr.
+
+The saved plan ID is printed after persistence. Plan files contain stable show identity and selected episode coordinates and titles, never service credentials or raw API responses.
+
+## Intended apply and status workflow
+
+Once the remaining commands are implemented, the plan ID will be used like this:
+
+```bash
 wit apply <plan-id> --yes
 wit status <plan-id>
 ```
 
-Planning is read-only. Applying a plan is explicit, narrowly targeted, and handled through Sonarr. “First N” means aired, non-special episodes in season/episode order; “all aired” excludes specials and future episodes by default.
+Applying a plan will be explicit, narrowly targeted, and handled through Sonarr. These mutating and status commands are not implemented yet.
 
 ## Responsible use
 
@@ -53,7 +71,7 @@ Never commit a real `.env`, API key, credential, private hostname, machine-speci
 
 ## Wit runtime configuration
 
-The typed configuration layer validates service URLs, Sonarr apply defaults, bounded HTTP timeouts, and the local XDG state path. Sonarr and Jellyfin API keys are accepted only through `WIT_*` environment values or an explicitly selected, owner-only TOML file; secret values are redacted from representations and configuration errors. `wit doctor` consumes these settings only for read-only diagnostics; mutating media commands are not implemented yet.
+The typed configuration layer validates service URLs, Sonarr apply defaults, bounded HTTP timeouts, and the local XDG state path. Sonarr and Jellyfin API keys are accepted only through `WIT_*` environment values or an explicitly selected, owner-only TOML file; secret values are redacted from representations and configuration errors. `wit doctor` uses these settings for read-only diagnostics, while `wit plan` uses only the TVmaze, timeout, and state values after validating the complete configuration. Mutating media commands are not implemented yet.
 
 See [`docs/configuration.md`](docs/configuration.md) for the complete variable list, protected-file format, precedence, validation rules, and the distinction from Compose's local `.env` file.
 

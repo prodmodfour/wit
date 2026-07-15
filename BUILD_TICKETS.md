@@ -491,7 +491,7 @@ Commit as one focused persistence commit.
 
 ## 021 — Add the read-only `wit plan` command
 
-Status: TODO
+Status: DONE
 
 Wire metadata search, matching, selection, rendering, and persistence into a read-only command.
 
