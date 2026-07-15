@@ -88,6 +88,54 @@ wit status <plan-id>
 
 The overall result is `ACTIVE` while work or library visibility is incomplete, `COMPLETE` only when every planned episode is imported and visible, `DEGRADED` when Jellyfin is unavailable but Sonarr status succeeded, and `FAILED` for a Sonarr warning, failure, or inconsistent coordinate mapping. Active and degraded results exit with status `0`; configuration, plan loading, service-read failures, and a `FAILED` result exit non-zero. The command performs only bounded read operations and never changes monitoring, queues, or media.
 
+## Machine-readable output and exit codes
+
+Add `--json` to `doctor`, `plan`, `apply`, or `status` for automation:
+
+```bash
+wit doctor --json
+wit plan "Example Show" --first 4 --json
+wit apply <plan-id> --yes --json
+wit status <plan-id> --json
+```
+
+A valid JSON-mode invocation writes exactly one JSON document to standard output. It does not mix human rendering, progress text, terminal decoration, or confirmation prompts into that stream. JSON apply is deliberately non-interactive and still requires `--yes`; metadata differences still require the separate `--allow-mismatch` safeguard.
+
+Every command uses output schema version 1 and the same top-level envelope:
+
+```json
+{
+  "schema_version": 1,
+  "command": "status",
+  "success": false,
+  "data": null,
+  "warnings": [],
+  "errors": [
+    {
+      "code": "plan-load-failed",
+      "message": "The stored plan could not be loaded"
+    }
+  ]
+}
+```
+
+`command` is one of `doctor`, `plan`, `apply`, or `status`. `success` agrees with command exit success. `warnings` and `errors` are always arrays of stable `code` and safe human-readable `message` objects; a successful envelope has no errors, and a failed envelope has at least one. `data` is command-specific and may be `null` when failure occurs before safe result data exists:
+
+- `doctor` returns configuration validity, overall state, local-path checks, and each service check.
+- `plan` returns the query, save state, complete secret-free plan, and candidates when explicit selection is required.
+- `apply` returns the complete stored plan and, when available, Sonarr series, disjoint outcome counts and episode IDs, command state, and confirmed discrepancies.
+- `status` returns the complete stored plan and normalised Sonarr, queue, command, per-episode, and Jellyfin visibility state.
+
+Consumers must reject unsupported `schema_version` values rather than guessing at a changed contract. The version covers both the envelope and command data shapes.
+
+Exit-code semantics are:
+
+- **0** — the command completed successfully and a JSON envelope has `success: true`. For `status`, ordinary incomplete (`active`) and Jellyfin-unavailable (`degraded`) results are successful reads. A safe apply no-op also succeeds.
+- **1** — configuration, persistence, service access, safety confirmation, apply rejection, or failed request status prevented command success; a JSON invocation that reached the command emits `success: false` with at least one error.
+- **2** — command-line usage or argument validation failed. Errors detected inside the command use a failed JSON envelope; errors rejected by Typer before command execution are written to standard error and cannot produce an envelope. Standard output remains empty in that case.
+
+Human-readable output remains the default when `--json` is absent.
+
 ## Responsible use
 
 Wit will not provide content sources, configure indexers, bypass DRM, extract subscription-service credentials, or expose services publicly by default. Operators are responsible for using media and download sources they are authorised to use.

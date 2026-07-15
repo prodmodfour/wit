@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from pathlib import Path
 
@@ -132,6 +133,89 @@ def test_doctor_reports_healthy_diagnostics_and_returns_success(
     assert "Seerr: OK - Seerr is healthy (version 3.3.0)" in result.output
     assert "Overall: OK - all required checks passed" in result.output
     assert all(credential not in result.output for credential in credentials)
+
+
+def test_doctor_json_emits_one_versioned_failure_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    credentials = _set_valid_environment(monkeypatch, tmp_path)
+    report = _doctor_report(
+        path_state=LocalPathState.READY,
+        path_summary="exists with read, write, and search access",
+        services=(
+            _service_result(
+                ServiceName.SONARR,
+                ServiceHealthState.HEALTHY,
+                "Sonarr is healthy",
+                version="4.0.16.2944",
+            ),
+            _service_result(
+                ServiceName.JELLYFIN,
+                ServiceHealthState.UNAVAILABLE,
+                "Jellyfin is unavailable",
+            ),
+            _service_result(
+                ServiceName.SEERR,
+                ServiceHealthState.HEALTHY,
+                "Seerr is healthy",
+            ),
+        ),
+    )
+
+    async def fake_run_doctor(settings: WitSettings) -> DoctorReport:
+        del settings
+        return report
+
+    monkeypatch.setattr(cli, "run_doctor", fake_run_doctor)
+
+    result = runner.invoke(cli.app, ["doctor", "--json"])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert list(payload) == [
+        "schema_version",
+        "command",
+        "success",
+        "data",
+        "warnings",
+        "errors",
+    ]
+    assert payload["schema_version"] == 1
+    assert payload["command"] == "doctor"
+    assert payload["success"] is False
+    assert payload["warnings"] == []
+    assert payload["errors"] == [
+        {
+            "code": "doctor-checks-failed",
+            "message": "One or more required local-path or service checks failed",
+        }
+    ]
+    assert payload["data"]["configuration"] == {"valid": True}
+    assert payload["data"]["state"] == "failed"
+    assert payload["data"]["local_paths"] == [
+        {
+            "name": "state-directory",
+            "state": "ready",
+            "summary": "exists with read, write, and search access",
+            "guidance": None,
+        }
+    ]
+    assert [service["name"] for service in payload["data"]["services"]] == [
+        "sonarr",
+        "jellyfin",
+        "seerr",
+    ]
+    assert payload["data"]["services"][1] == {
+        "name": "jellyfin",
+        "state": "unavailable",
+        "summary": "Jellyfin is unavailable",
+        "version": None,
+        "guidance": "Verify WIT_JELLYFIN_URL and that Jellyfin is running.",
+    }
+    assert "Configuration: OK" not in result.stdout
+    assert "Overall: FAILED" not in result.stdout
+    assert all(credential not in result.stdout for credential in credentials)
 
 
 def test_doctor_reports_partial_service_health_independently(

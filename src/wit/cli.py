@@ -28,6 +28,13 @@ from wit.clients import (
 from wit.config import ConfigurationError, WitSettings, load_settings
 from wit.doctor import DoctorReport, LocalPathCheck, LocalPathState, run_doctor
 from wit.errors import WitError
+from wit.output import (
+    JsonObject,
+    JsonOutputCommand,
+    JsonOutputEnvelope,
+    JsonOutputIssue,
+    JsonValue,
+)
 from wit.plan_store import PlanStore
 from wit.planning import (
     ShowCandidateSelectionRequiredError,
@@ -44,6 +51,7 @@ from wit.status import (
 
 _MAX_EPISODE_COORDINATE = 2_147_483_647
 _EPISODE_RANGE_PATTERN = re.compile(r"([1-9][0-9]{0,9})-([1-9][0-9]{0,9})\Z")
+_JSON_OPTION_HELP = "Write one versioned JSON envelope to standard output."
 
 app = typer.Typer(
     help="Safe, local-first television library operations.",
@@ -128,23 +136,46 @@ def plan_command(
             help="Explicitly select a TVmaze ID from an ambiguous candidate list.",
         ),
     ] = None,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help=_JSON_OPTION_HELP),
+    ] = False,
 ) -> None:
     """Create and save a read-only, inspectable episode download plan."""
-    selector = _build_episode_selector(
-        first=first,
-        season=season,
-        episode_range=episode_range,
-        all_aired=all_aired,
-    )
+    try:
+        selector = _build_episode_selector(
+            first=first,
+            season=season,
+            episode_range=episode_range,
+            all_aired=all_aired,
+        )
+    except typer.BadParameter as error:
+        if not json_output:
+            raise
+        _emit_json_output(
+            command=JsonOutputCommand.PLAN,
+            success=False,
+            data=_plan_command_json_data(query),
+            errors=(_output_issue("invalid-arguments", str(error)),),
+        )
+        raise typer.Exit(code=2) from None
 
     try:
         settings = load_settings()
     except ConfigurationError as error:
-        typer.echo(f"Planning failed: {error}")
-        typer.echo(
-            "Next step: set the required WIT_* values or WIT_CONFIG_FILE; "
-            "see docs/configuration.md."
-        )
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.PLAN,
+                success=False,
+                data=_plan_command_json_data(query),
+                errors=(_configuration_output_issue(error),),
+            )
+        else:
+            typer.echo(f"Planning failed: {error}")
+            typer.echo(
+                "Next step: set the required WIT_* values or WIT_CONFIG_FILE; "
+                "see docs/configuration.md."
+            )
         raise typer.Exit(code=1) from None
 
     try:
@@ -158,20 +189,54 @@ def plan_command(
             )
         )
     except ShowCandidateSelectionRequiredError as error:
-        _render_show_candidates(error)
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.PLAN,
+                success=False,
+                data=_plan_command_json_data(query, candidate_error=error),
+                errors=(_output_issue("candidate-selection-required", str(error)),),
+            )
+        else:
+            _render_show_candidates(error)
         raise typer.Exit(code=1) from None
     except WitError as error:
-        typer.echo(f"Planning failed: {error}")
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.PLAN,
+                success=False,
+                data=_plan_command_json_data(query),
+                errors=(_output_issue("planning-failed", str(error)),),
+            )
+        else:
+            typer.echo(f"Planning failed: {error}")
         raise typer.Exit(code=1) from None
 
-    # The complete immutable plan is deliberately rendered before persistence.
-    typer.echo(plan.render())
+    # Human output preserves the inspect-before-persistence workflow. JSON mode
+    # emits only one final document, which contains the same complete plan.
+    if not json_output:
+        typer.echo(plan.render())
     try:
         PlanStore(settings.state_dir).save(plan)
     except WitError as error:
-        typer.echo(f"Planning failed: {error}")
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.PLAN,
+                success=False,
+                data=_plan_command_json_data(query, plan=plan),
+                errors=(_output_issue("plan-save-failed", str(error)),),
+            )
+        else:
+            typer.echo(f"Planning failed: {error}")
         raise typer.Exit(code=1) from None
-    typer.echo(f"Saved plan ID: {plan.plan_id}")
+
+    if json_output:
+        _emit_json_output(
+            command=JsonOutputCommand.PLAN,
+            success=True,
+            data=_plan_command_json_data(query, plan=plan, saved=True),
+        )
+    else:
+        typer.echo(f"Saved plan ID: {plan.plan_id}")
 
 
 async def _build_read_only_plan(
@@ -288,27 +353,48 @@ def apply_command(
             help="Explicitly confirm material current Sonarr metadata differences.",
         ),
     ] = False,
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help=_JSON_OPTION_HELP),
+    ] = False,
 ) -> None:
     """Confirm and apply one stored plan with targeted Sonarr operations."""
     try:
         settings = load_settings()
     except ConfigurationError as error:
-        typer.echo(f"Apply failed: {error}")
-        typer.echo(
-            "Next step: set the required WIT_* values or WIT_CONFIG_FILE; "
-            "see docs/configuration.md."
-        )
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.APPLY,
+                success=False,
+                data=None,
+                errors=(_configuration_output_issue(error),),
+            )
+        else:
+            typer.echo(f"Apply failed: {error}")
+            typer.echo(
+                "Next step: set the required WIT_* values or WIT_CONFIG_FILE; "
+                "see docs/configuration.md."
+            )
         raise typer.Exit(code=1) from None
 
     try:
         plan = PlanStore(settings.state_dir).load(plan_id)
     except WitError as error:
-        typer.echo(f"Apply failed: {error}")
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.APPLY,
+                success=False,
+                data=None,
+                errors=(_output_issue("plan-load-failed", str(error)),),
+            )
+        else:
+            typer.echo(f"Apply failed: {error}")
         raise typer.Exit(code=1) from None
 
-    # Re-render the immutable stored plan immediately before age validation and
-    # confirmation so an operator can inspect every requested coordinate.
-    typer.echo(plan.render())
+    # Human mode re-renders the immutable stored plan before confirmation. JSON
+    # mode carries the complete plan in its one final envelope instead.
+    if not json_output:
+        typer.echo(plan.render())
     reference_time = _utc_now()
     try:
         validate_download_plan_age(
@@ -317,10 +403,41 @@ def apply_command(
             allow_stale=allow_stale,
         )
     except ApplyPlanRejectedError as error:
-        _render_apply_rejection(error)
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.APPLY,
+                success=False,
+                data=_apply_command_json_data(plan, rejection=error),
+                warnings=_apply_json_warnings(
+                    allow_stale=allow_stale,
+                    allow_mismatch=allow_mismatch,
+                    discrepancies=(),
+                ),
+                errors=(_output_issue("apply-rejected", str(error)),),
+            )
+        else:
+            _render_apply_rejection(error)
         raise typer.Exit(code=1) from None
 
     if not yes:
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.APPLY,
+                success=False,
+                data=_apply_command_json_data(plan),
+                warnings=_apply_json_warnings(
+                    allow_stale=allow_stale,
+                    allow_mismatch=allow_mismatch,
+                    discrepancies=(),
+                ),
+                errors=(
+                    _output_issue(
+                        "confirmation-required",
+                        "JSON apply requires --yes; no Sonarr changes were made",
+                    ),
+                ),
+            )
+            raise typer.Exit(code=1)
         if not _is_interactive_input():
             typer.echo("Apply failed: non-interactive use requires --yes; no Sonarr changes made.")
             raise typer.Exit(code=1)
@@ -328,9 +445,15 @@ def apply_command(
             typer.echo("Apply cancelled; no Sonarr changes made.")
             raise typer.Exit(code=1)
 
+    observed_discrepancies: tuple[ApplyPlanDiscrepancy, ...] = ()
+
     def confirm_discrepancies(
         discrepancies: tuple[ApplyPlanDiscrepancy, ...],
     ) -> bool:
+        nonlocal observed_discrepancies
+        observed_discrepancies = discrepancies
+        if json_output:
+            return allow_mismatch
         return _confirm_apply_discrepancies(
             discrepancies,
             allow_mismatch=allow_mismatch,
@@ -347,13 +470,74 @@ def apply_command(
             )
         )
     except ApplyPlanRejectedError as error:
-        _render_apply_rejection(error)
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.APPLY,
+                success=False,
+                data=_apply_command_json_data(
+                    plan,
+                    rejection=error,
+                    discrepancies=observed_discrepancies,
+                ),
+                warnings=_apply_json_warnings(
+                    allow_stale=allow_stale,
+                    allow_mismatch=allow_mismatch,
+                    discrepancies=observed_discrepancies,
+                ),
+                errors=(_output_issue("apply-rejected", str(error)),),
+            )
+        else:
+            _render_apply_rejection(error)
         raise typer.Exit(code=1) from None
     except WitError as error:
-        typer.echo(f"Apply failed: {error}")
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.APPLY,
+                success=False,
+                data=_apply_command_json_data(
+                    plan,
+                    discrepancies=observed_discrepancies,
+                ),
+                warnings=_apply_json_warnings(
+                    allow_stale=allow_stale,
+                    allow_mismatch=allow_mismatch,
+                    discrepancies=observed_discrepancies,
+                ),
+                errors=(_output_issue("apply-failed", str(error)),),
+            )
+        else:
+            typer.echo(f"Apply failed: {error}")
         raise typer.Exit(code=1) from None
 
-    _render_apply_result(result)
+    if json_output:
+        success = result.rejected_count == 0
+        errors = (
+            ()
+            if success
+            else (
+                _output_issue(
+                    "episodes-rejected",
+                    f"{result.rejected_count} planned episode(s) were rejected",
+                ),
+            )
+        )
+        _emit_json_output(
+            command=JsonOutputCommand.APPLY,
+            success=success,
+            data=_apply_command_json_data(
+                plan,
+                result=result,
+                discrepancies=observed_discrepancies,
+            ),
+            warnings=_apply_json_warnings(
+                allow_stale=allow_stale,
+                allow_mismatch=allow_mismatch,
+                discrepancies=observed_discrepancies,
+            ),
+            errors=errors,
+        )
+    else:
+        _render_apply_result(result)
     if result.rejected_count:
         raise typer.Exit(code=1)
 
@@ -470,31 +654,89 @@ def status_command(
         str,
         typer.Argument(help="Stored download-plan ID whose progress should be inspected."),
     ],
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help=_JSON_OPTION_HELP),
+    ] = False,
 ) -> None:
     """Show read-only Sonarr progress and Jellyfin visibility for one plan."""
     try:
         settings = load_settings()
     except ConfigurationError as error:
-        typer.echo(f"Status failed: {error}")
-        typer.echo(
-            "Next step: set the required WIT_* values or WIT_CONFIG_FILE; "
-            "see docs/configuration.md."
-        )
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.STATUS,
+                success=False,
+                data=None,
+                errors=(_configuration_output_issue(error),),
+            )
+        else:
+            typer.echo(f"Status failed: {error}")
+            typer.echo(
+                "Next step: set the required WIT_* values or WIT_CONFIG_FILE; "
+                "see docs/configuration.md."
+            )
         raise typer.Exit(code=1) from None
 
     try:
         plan = PlanStore(settings.state_dir).load(plan_id)
     except WitError as error:
-        typer.echo(f"Status failed: {error}")
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.STATUS,
+                success=False,
+                data=None,
+                errors=(_output_issue("plan-load-failed", str(error)),),
+            )
+        else:
+            typer.echo(f"Status failed: {error}")
         raise typer.Exit(code=1) from None
 
     try:
         result = asyncio.run(_get_status_for_plan(settings, plan))
     except WitError as error:
-        typer.echo(f"Status failed: {error}")
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.STATUS,
+                success=False,
+                data=_status_command_json_data(plan),
+                errors=(_output_issue("status-read-failed", str(error)),),
+            )
+        else:
+            typer.echo(f"Status failed: {error}")
         raise typer.Exit(code=1) from None
 
-    _render_request_status(plan, result)
+    if json_output:
+        success = not result.operational_failure
+        warnings = (
+            (
+                _output_issue(
+                    "jellyfin-unavailable",
+                    "Jellyfin is unavailable; Sonarr progress is still available",
+                ),
+            )
+            if result.state is RequestOverallState.DEGRADED
+            else ()
+        )
+        errors = (
+            ()
+            if success
+            else (
+                _output_issue(
+                    "request-status-failed",
+                    "Sonarr reports a failure, warning, or inconsistent episode mapping",
+                ),
+            )
+        )
+        _emit_json_output(
+            command=JsonOutputCommand.STATUS,
+            success=success,
+            data=_status_command_json_data(plan, result=result),
+            warnings=warnings,
+            errors=errors,
+        )
+    else:
+        _render_request_status(plan, result)
     if result.operational_failure:
         raise typer.Exit(code=1)
 
@@ -545,21 +787,51 @@ def _request_status_summary(state: RequestOverallState) -> str:
 
 
 @app.command()
-def doctor() -> None:
+def doctor(
+    json_output: Annotated[
+        bool,
+        typer.Option("--json", help=_JSON_OPTION_HELP),
+    ] = False,
+) -> None:
     """Validate configuration, local paths, and service connectivity."""
     try:
         settings = load_settings()
     except ConfigurationError as error:
-        typer.echo(f"Configuration: FAILED - {error}")
-        typer.echo(
-            "Next step: set the required WIT_* values or WIT_CONFIG_FILE; "
-            "see docs/configuration.md."
-        )
+        if json_output:
+            _emit_json_output(
+                command=JsonOutputCommand.DOCTOR,
+                success=False,
+                data=_doctor_json_data(None, configuration_valid=False),
+                errors=(_configuration_output_issue(error),),
+            )
+        else:
+            typer.echo(f"Configuration: FAILED - {error}")
+            typer.echo(
+                "Next step: set the required WIT_* values or WIT_CONFIG_FILE; "
+                "see docs/configuration.md."
+            )
         raise typer.Exit(code=1) from None
 
-    typer.echo("Configuration: OK - required settings are valid")
     report = asyncio.run(run_doctor(settings))
-    _render_doctor_report(report)
+    if json_output:
+        _emit_json_output(
+            command=JsonOutputCommand.DOCTOR,
+            success=report.successful,
+            data=_doctor_json_data(report, configuration_valid=True),
+            errors=(
+                ()
+                if report.successful
+                else (
+                    _output_issue(
+                        "doctor-checks-failed",
+                        "One or more required local-path or service checks failed",
+                    ),
+                )
+            ),
+        )
+    else:
+        typer.echo("Configuration: OK - required settings are valid")
+        _render_doctor_report(report)
     if not report.successful:
         raise typer.Exit(code=1)
 
@@ -620,3 +892,357 @@ def _service_failure_guidance(
             return "Verify that WIT_SEERR_URL exposes Seerr's status endpoint."
         return f"Verify WIT_{setting_prefix}_API_KEY and its service permissions."
     return f"Inspect the {label} dashboard and logs for health details."
+
+
+def _emit_json_output(
+    *,
+    command: JsonOutputCommand,
+    success: bool,
+    data: JsonObject | None,
+    warnings: tuple[JsonOutputIssue, ...] = (),
+    errors: tuple[JsonOutputIssue, ...] = (),
+) -> None:
+    """Write exactly one versioned JSON document to standard output."""
+    envelope = JsonOutputEnvelope(
+        command=command,
+        success=success,
+        data=data,
+        warnings=warnings,
+        errors=errors,
+    )
+    typer.echo(envelope.render())
+
+
+def _output_issue(code: str, message: str) -> JsonOutputIssue:
+    return JsonOutputIssue(code=code, message=message)
+
+
+def _configuration_output_issue(error: ConfigurationError) -> JsonOutputIssue:
+    return _output_issue(
+        "configuration-invalid",
+        f"{error}. Set the required WIT_* values or WIT_CONFIG_FILE; see docs/configuration.md.",
+    )
+
+
+def _download_plan_json_data(plan: DownloadPlan) -> JsonObject:
+    episodes: list[JsonValue] = []
+    for episode in plan.episodes:
+        episode_data: JsonObject = {
+            "season_number": episode.season_number,
+            "episode_number": episode.episode_number,
+            "label": episode.label,
+            "title": episode.title,
+        }
+        episodes.append(episode_data)
+
+    show: JsonObject = {
+        "title": plan.show_title,
+        "year": plan.show_year,
+        "tvmaze_id": plan.tvmaze_id,
+        "tvdb_id": plan.tvdb_id,
+    }
+    return {
+        "schema_version": plan.schema_version,
+        "plan_id": plan.plan_id,
+        "created_at": plan.created_at.isoformat().replace("+00:00", "Z"),
+        "show": show,
+        "selector_summary": plan.selector_summary,
+        "episode_count": plan.episode_count,
+        "episodes": episodes,
+    }
+
+
+def _plan_command_json_data(
+    query: str,
+    *,
+    plan: DownloadPlan | None = None,
+    saved: bool = False,
+    candidate_error: ShowCandidateSelectionRequiredError | None = None,
+) -> JsonObject:
+    candidates: list[JsonValue] = []
+    if candidate_error is not None:
+        for candidate in candidate_error.candidates:
+            show = candidate.show
+            candidate_data: JsonObject = {
+                "tvmaze_id": show.tvmaze_id,
+                "title": show.title,
+                "year": show.premiere_year,
+                "tvdb_id": show.tvdb_id,
+            }
+            candidates.append(candidate_data)
+
+    plan_data: JsonValue = _download_plan_json_data(plan) if plan is not None else None
+    return {
+        "query": query,
+        "saved": saved,
+        "plan": plan_data,
+        "candidates": candidates,
+    }
+
+
+def _apply_command_json_data(
+    plan: DownloadPlan,
+    *,
+    result: ApplyPlanResult | None = None,
+    rejection: ApplyPlanRejectedError | None = None,
+    discrepancies: tuple[ApplyPlanDiscrepancy, ...] = (),
+) -> JsonObject:
+    if result is not None and rejection is not None:
+        raise ValueError("apply JSON data cannot contain a result and rejection")
+
+    result_data: JsonValue = None
+    if result is not None:
+        result_data = _apply_result_json_data(result, discrepancies=discrepancies)
+    elif rejection is not None:
+        outcomes: JsonObject = {
+            "applied": _apply_outcome_json_data(rejection.applied_count, None),
+            "skipped_file": _apply_outcome_json_data(rejection.skipped_file_count, None),
+            "skipped_queue": _apply_outcome_json_data(rejection.skipped_queue_count, None),
+            "rejected": _apply_outcome_json_data(rejection.rejected_count, None),
+        }
+        result_data = {
+            "series": None,
+            "outcomes": outcomes,
+            "command": None,
+            "discrepancies": _apply_discrepancy_json_data(discrepancies),
+        }
+
+    return {
+        "plan": _download_plan_json_data(plan),
+        "result": result_data,
+    }
+
+
+def _apply_result_json_data(
+    result: ApplyPlanResult,
+    *,
+    discrepancies: tuple[ApplyPlanDiscrepancy, ...],
+) -> JsonObject:
+    series: JsonObject = {
+        "sonarr_id": result.series.sonarr_id,
+        "tvdb_id": result.series.tvdb_id,
+        "title": result.series.title,
+        "year": result.series.year,
+        "created": result.series_created,
+    }
+    outcomes: JsonObject = {
+        "applied": _apply_outcome_json_data(
+            result.applied_count,
+            result.applied_episode_ids,
+        ),
+        "skipped_file": _apply_outcome_json_data(
+            result.skipped_file_count,
+            result.skipped_file_episode_ids,
+        ),
+        "skipped_queue": _apply_outcome_json_data(
+            result.skipped_queue_count,
+            result.skipped_queue_episode_ids,
+        ),
+        "rejected": _apply_outcome_json_data(
+            result.rejected_count,
+            result.rejected_episode_ids,
+        ),
+    }
+    command: JsonValue = None
+    if result.command is not None:
+        command = {
+            "command_id": result.command.command_id,
+            "state": result.command.state.value,
+        }
+    return {
+        "series": series,
+        "outcomes": outcomes,
+        "command": command,
+        "discrepancies": _apply_discrepancy_json_data(discrepancies),
+    }
+
+
+def _apply_outcome_json_data(
+    count: int,
+    episode_ids: tuple[int, ...] | None,
+) -> JsonObject:
+    identifiers: list[JsonValue] | None = (
+        None if episode_ids is None else [episode_id for episode_id in episode_ids]
+    )
+    return {
+        "count": count,
+        "episode_ids": identifiers,
+    }
+
+
+def _apply_discrepancy_json_data(
+    discrepancies: tuple[ApplyPlanDiscrepancy, ...],
+) -> list[JsonValue]:
+    entries: list[JsonValue] = []
+    for discrepancy in discrepancies:
+        entry: JsonObject = {
+            "kind": discrepancy.kind.value,
+            "summary": discrepancy.summary,
+        }
+        entries.append(entry)
+    return entries
+
+
+def _apply_json_warnings(
+    *,
+    allow_stale: bool,
+    allow_mismatch: bool,
+    discrepancies: tuple[ApplyPlanDiscrepancy, ...],
+) -> tuple[JsonOutputIssue, ...]:
+    warnings: list[JsonOutputIssue] = []
+    if allow_stale:
+        warnings.append(
+            _output_issue(
+                "stale-plan-override",
+                "The default stored-plan age limit was explicitly overridden",
+            )
+        )
+    if allow_mismatch and discrepancies:
+        warnings.append(
+            _output_issue(
+                "metadata-mismatch-override",
+                f"{len(discrepancies)} material Sonarr metadata difference(s) "
+                "were explicitly confirmed",
+            )
+        )
+    return tuple(warnings)
+
+
+def _status_command_json_data(
+    plan: DownloadPlan,
+    *,
+    result: CombinedRequestStatusResult | None = None,
+) -> JsonObject:
+    result_data: JsonValue = _status_result_json_data(result) if result is not None else None
+    return {
+        "plan": _download_plan_json_data(plan),
+        "result": result_data,
+    }
+
+
+def _status_result_json_data(result: CombinedRequestStatusResult) -> JsonObject:
+    series: JsonValue = None
+    if result.sonarr.series is not None:
+        series = {
+            "sonarr_id": result.sonarr.series.sonarr_id,
+            "tvdb_id": result.sonarr.series.tvdb_id,
+            "title": result.sonarr.series.title,
+            "year": result.sonarr.series.year,
+        }
+
+    command: JsonValue = None
+    if result.sonarr.command_id is not None:
+        command = {
+            "command_id": result.sonarr.command_id,
+            "state": (
+                result.sonarr.command_state.value
+                if result.sonarr.command_state is not None
+                else None
+            ),
+        }
+
+    episodes: list[JsonValue] = []
+    for combined in result.episodes:
+        episode = combined.sonarr
+        planned = episode.planned_episode
+        queue_items: list[JsonValue] = []
+        for item in episode.queue_items:
+            queue_item: JsonObject = {
+                "queue_id": item.queue_id,
+                "series_id": item.series_id,
+                "episode_id": item.episode_id,
+                "state": item.state.value,
+            }
+            queue_items.append(queue_item)
+
+        episode_errors: list[JsonValue] = []
+        for error in episode.errors:
+            error_data: JsonObject = {
+                "kind": error.kind.value,
+                "detail": error.detail,
+            }
+            episode_errors.append(error_data)
+
+        sonarr: JsonObject = {
+            "state": episode.state.value,
+            "episode_id": episode.sonarr_episode_id,
+            "monitored": episode.monitored,
+            "has_file": episode.has_file,
+            "queue": queue_items,
+            "command_state": (
+                episode.command_state.value if episode.command_state is not None else None
+            ),
+            "errors": episode_errors,
+        }
+        episode_data: JsonObject = {
+            "season_number": planned.season_number,
+            "episode_number": planned.episode_number,
+            "label": planned.label,
+            "title": planned.title,
+            "sonarr": sonarr,
+            "jellyfin_state": (
+                combined.jellyfin_state.value if combined.jellyfin_state is not None else None
+            ),
+        }
+        episodes.append(episode_data)
+
+    return {
+        "state": result.state.value,
+        "summary": _request_status_summary(result.state),
+        "operational_failure": result.operational_failure,
+        "episode_count": len(result.episodes),
+        "imported_count": result.imported_count,
+        "visible_count": result.visible_count,
+        "jellyfin_library_state": (
+            result.jellyfin_state.value if result.jellyfin_state is not None else None
+        ),
+        "sonarr_series": series,
+        "sonarr_command": command,
+        "episodes": episodes,
+    }
+
+
+def _doctor_json_data(
+    report: DoctorReport | None,
+    *,
+    configuration_valid: bool,
+) -> JsonObject:
+    local_paths: list[JsonValue] = []
+    services: list[JsonValue] = []
+    if report is not None:
+        for check in report.local_paths:
+            guidance: JsonValue = (
+                None
+                if check.state is LocalPathState.READY
+                else _local_path_failure_guidance(check.state)
+            )
+            path_data: JsonObject = {
+                "name": check.name.value.replace(" ", "-"),
+                "state": check.state.value,
+                "summary": check.summary,
+                "guidance": guidance,
+            }
+            local_paths.append(path_data)
+
+        for result in report.services:
+            guidance = (
+                None
+                if result.state is ServiceHealthState.HEALTHY
+                else _service_failure_guidance(result.service, result.state)
+            )
+            service_data: JsonObject = {
+                "name": result.service.value,
+                "state": result.state.value,
+                "summary": result.summary,
+                "version": result.version,
+                "guidance": guidance,
+            }
+            services.append(service_data)
+
+    successful = configuration_valid and report is not None and report.successful
+    return {
+        "configuration": {"valid": configuration_valid},
+        "state": "ok" if successful else "failed",
+        "local_paths": local_paths,
+        "services": services,
+    }

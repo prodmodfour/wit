@@ -697,7 +697,7 @@ Commit as one focused command commit.
 
 ## 030 — Add stable machine-readable output
 
-Status: TODO
+Status: DONE
 
 Make the CLI reliable for Pi and other automation without changing domain behaviour.
 

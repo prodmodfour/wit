@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -159,6 +160,62 @@ def test_apply_yes_loads_the_plan_and_renders_separate_outcome_counts(
     assert as_of == _NOW
     assert not allow_stale
     assert all(credential not in result.output for credential in credentials)
+
+
+def test_apply_json_emits_one_structured_result_without_progress_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    credentials = _set_valid_environment(monkeypatch, tmp_path)
+    plan = _plan()
+    PlanStore(tmp_path / "state").save(plan)
+    calls: list[tuple[WitSettings, DownloadPlan, datetime, bool]] = []
+    monkeypatch.setattr(
+        cli,
+        "_apply_plan_through_sonarr",
+        _fake_apply_signature(calls, _apply_result),
+    )
+
+    result = runner.invoke(cli.app, ["apply", plan.plan_id, "--yes", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert list(payload) == [
+        "schema_version",
+        "command",
+        "success",
+        "data",
+        "warnings",
+        "errors",
+    ]
+    assert payload["schema_version"] == 1
+    assert payload["command"] == "apply"
+    assert payload["success"] is True
+    assert payload["warnings"] == []
+    assert payload["errors"] == []
+    assert payload["data"]["plan"]["plan_id"] == plan.plan_id
+    assert payload["data"]["result"] == {
+        "series": {
+            "sonarr_id": 42,
+            "tvdb_id": 31415,
+            "title": "Clockwork Harbor",
+            "year": 2024,
+            "created": False,
+        },
+        "outcomes": {
+            "applied": {"count": 2, "episode_ids": [101, 102]},
+            "skipped_file": {"count": 0, "episode_ids": []},
+            "skipped_queue": {"count": 0, "episode_ids": []},
+            "rejected": {"count": 0, "episode_ids": []},
+        },
+        "command": {"command_id": 501, "state": "queued"},
+        "discrepancies": [],
+    }
+    assert "Download plan:" not in result.stdout
+    assert "Processed plan" not in result.stdout
+    assert "Applied:" not in result.stdout
+    assert all(credential not in result.stdout for credential in credentials)
+    assert len(calls) == 1
 
 
 def test_apply_accepts_interactive_confirmation_before_contacting_sonarr(

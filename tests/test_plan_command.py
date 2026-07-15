@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -197,6 +198,78 @@ def test_plan_prints_every_selected_episode_then_saves_a_fixed_time_plan(
     assert [episode.coordinate for episode in stored.episodes] == [(1, 1), (1, 2)]
     persisted = (tmp_path / "state" / "plans" / "plan-fixed-001.json").read_text()
     assert all(credential not in persisted for credential in credentials)
+
+
+def test_plan_json_emits_the_complete_saved_plan_without_human_decoration(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    credentials = _set_valid_environment(monkeypatch, tmp_path)
+    client = _FakeMetadataClient(
+        (_show(101),),
+        {
+            101: _episodes(
+                _episode(101, 1, 1, "First Light"),
+                _episode(102, 1, 2, "Turning Tide"),
+            )
+        },
+    )
+    _install_metadata_double(monkeypatch, client)
+
+    result = runner.invoke(
+        cli.app,
+        ["plan", "Clockwork Harbor", "--first", "2", "--json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert list(payload) == [
+        "schema_version",
+        "command",
+        "success",
+        "data",
+        "warnings",
+        "errors",
+    ]
+    assert payload["schema_version"] == 1
+    assert payload["command"] == "plan"
+    assert payload["success"] is True
+    assert payload["warnings"] == []
+    assert payload["errors"] == []
+    assert payload["data"]["query"] == "Clockwork Harbor"
+    assert payload["data"]["saved"] is True
+    assert payload["data"]["candidates"] == []
+    assert payload["data"]["plan"] == {
+        "schema_version": 1,
+        "plan_id": "plan-fixed-001",
+        "created_at": "2025-01-10T12:00:00Z",
+        "show": {
+            "title": "Clockwork Harbor",
+            "year": 2024,
+            "tvmaze_id": 101,
+            "tvdb_id": 31415,
+        },
+        "selector_summary": "first 2 aired regular episodes",
+        "episode_count": 2,
+        "episodes": [
+            {
+                "season_number": 1,
+                "episode_number": 1,
+                "label": "S01E01",
+                "title": "First Light",
+            },
+            {
+                "season_number": 1,
+                "episode_number": 2,
+                "label": "S01E02",
+                "title": "Turning Tide",
+            },
+        ],
+    }
+    assert "Download plan:" not in result.stdout
+    assert "Saved plan ID:" not in result.stdout
+    assert all(credential not in result.stdout for credential in credentials)
+    assert PlanStore(tmp_path / "state").load("plan-fixed-001").episode_count == 2
 
 
 def test_ambiguous_title_lists_candidates_and_accepts_explicit_tvmaze_id(

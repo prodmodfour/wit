@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -274,6 +275,68 @@ def test_status_reports_unavailable_jellyfin_as_successful_degraded_status(
     assert "Overall: DEGRADED - Jellyfin is unavailable; Sonarr progress is still shown" in (
         result.output
     )
+
+
+def test_status_json_reports_degraded_success_with_a_structured_warning(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    credentials = _set_valid_environment(monkeypatch, tmp_path)
+    plan = _plan()
+    PlanStore(tmp_path / "state").save(plan)
+    status = _combined_result(
+        plan,
+        overall=RequestOverallState.DEGRADED,
+        sonarr_states=(RequestEpisodeState.IMPORTED, RequestEpisodeState.IMPORTED),
+        jellyfin_states=(
+            JellyfinEpisodeAvailabilityState.UNAVAILABLE,
+            JellyfinEpisodeAvailabilityState.UNAVAILABLE,
+        ),
+        jellyfin_library_state=JellyfinLibraryState.UNAVAILABLE,
+    )
+    _install_status_result(monkeypatch, plan, status)
+
+    result = runner.invoke(cli.app, ["status", plan.plan_id, "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert list(payload) == [
+        "schema_version",
+        "command",
+        "success",
+        "data",
+        "warnings",
+        "errors",
+    ]
+    assert payload["schema_version"] == 1
+    assert payload["command"] == "status"
+    assert payload["success"] is True
+    assert payload["errors"] == []
+    assert payload["warnings"] == [
+        {
+            "code": "jellyfin-unavailable",
+            "message": "Jellyfin is unavailable; Sonarr progress is still available",
+        }
+    ]
+    assert payload["data"]["plan"]["plan_id"] == plan.plan_id
+    status_data = payload["data"]["result"]
+    assert status_data["state"] == "degraded"
+    assert status_data["operational_failure"] is False
+    assert status_data["episode_count"] == 2
+    assert status_data["imported_count"] == 2
+    assert status_data["visible_count"] == 0
+    assert status_data["jellyfin_library_state"] == "unavailable"
+    assert [episode["sonarr"]["state"] for episode in status_data["episodes"]] == [
+        "imported",
+        "imported",
+    ]
+    assert [episode["jellyfin_state"] for episode in status_data["episodes"]] == [
+        "unavailable",
+        "unavailable",
+    ]
+    assert "Plan status:" not in result.stdout
+    assert "Overall: DEGRADED" not in result.stdout
+    assert all(credential not in result.stdout for credential in credentials)
 
 
 def test_status_reports_failed_plan_details_and_returns_operational_failure(
