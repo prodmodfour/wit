@@ -1,4 +1,4 @@
-"""Read-only Sonarr-backed progress reporting for stored download plans."""
+"""Read-only Sonarr and Jellyfin progress reporting for stored download plans."""
 
 from __future__ import annotations
 
@@ -9,6 +9,9 @@ from typing import Annotated, Protocol, Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from wit.clients import (
+    JellyfinEpisodeAvailabilityState,
+    JellyfinLibraryAvailability,
+    JellyfinLibraryState,
     SonarrCommandFailedError,
     SonarrCommandRejectedError,
     SonarrCommandState,
@@ -46,6 +49,15 @@ class RequestEpisodeState(StrEnum):
     IMPORTED = "imported"
     MISSING = "missing"
     WARNING = "warning"
+    FAILED = "failed"
+
+
+class RequestOverallState(StrEnum):
+    """Operator-facing outcome of one combined Sonarr and Jellyfin status read."""
+
+    ACTIVE = "active"
+    COMPLETE = "complete"
+    DEGRADED = "degraded"
     FAILED = "failed"
 
 
@@ -118,6 +130,68 @@ class RequestStatusResult(_RequestStatusModel):
         return self
 
 
+class CombinedRequestEpisodeStatus(_RequestStatusModel):
+    """One Sonarr episode observation plus viewer-facing Jellyfin visibility."""
+
+    sonarr: RequestEpisodeStatus
+    jellyfin_state: JellyfinEpisodeAvailabilityState | None
+
+    @model_validator(mode="after")
+    def _validate_jellyfin_observation(self) -> Self:
+        imported = self.sonarr.state is RequestEpisodeState.IMPORTED
+        if imported != (self.jellyfin_state is not None):
+            raise ValueError("only imported episodes can contain Jellyfin visibility")
+        return self
+
+
+class CombinedRequestStatusResult(_RequestStatusModel):
+    """Complete read-only progress from Sonarr and, when needed, Jellyfin."""
+
+    sonarr: RequestStatusResult
+    jellyfin_state: JellyfinLibraryState | None
+    state: RequestOverallState
+    episodes: tuple[CombinedRequestEpisodeStatus, ...]
+
+    @model_validator(mode="after")
+    def _validate_combined_result(self) -> Self:
+        if tuple(item.sonarr for item in self.episodes) != self.sonarr.episodes:
+            raise ValueError("combined request status must preserve every Sonarr episode")
+
+        has_imported_episode = any(
+            item.sonarr.state is RequestEpisodeState.IMPORTED for item in self.episodes
+        )
+        if has_imported_episode != (self.jellyfin_state is not None):
+            raise ValueError(
+                "Jellyfin library state must be present exactly when episodes imported"
+            )
+        if self.state is not _classify_combined_status(self.episodes, self.jellyfin_state):
+            raise ValueError("combined request status has an inconsistent overall state")
+        return self
+
+    @property
+    def plan_id(self) -> str:
+        """Return the stored plan identity represented by this result."""
+        return self.sonarr.plan_id
+
+    @property
+    def imported_count(self) -> int:
+        """Return how many planned episodes Sonarr reports as imported."""
+        return sum(item.sonarr.state is RequestEpisodeState.IMPORTED for item in self.episodes)
+
+    @property
+    def visible_count(self) -> int:
+        """Return how many imported episodes are visible in Jellyfin."""
+        return sum(
+            item.jellyfin_state is JellyfinEpisodeAvailabilityState.VISIBLE
+            for item in self.episodes
+        )
+
+    @property
+    def operational_failure(self) -> bool:
+        """Return whether episode observations require a failing command exit."""
+        return self.state is RequestOverallState.FAILED
+
+
 class StatusSonarrClient(Protocol):
     """The narrow read-only Sonarr operations required for request status."""
 
@@ -138,6 +212,20 @@ class StatusSonarrClient(Protocol):
         ...
 
 
+class StatusJellyfinClient(Protocol):
+    """The narrow read-only Jellyfin operation required for imported episodes."""
+
+    async def get_library_availability(
+        self,
+        *,
+        tvdb_id: int,
+        title: str,
+        year: int | None,
+    ) -> JellyfinLibraryAvailability:
+        """Find the series and all visible episode coordinates."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class _MappedEpisode:
     planned: PlannedEpisode
@@ -150,6 +238,46 @@ class _CommandObservation:
     command_id: int | None
     state: SonarrCommandState | None
     error: RequestEpisodeError | None = None
+
+
+async def get_combined_request_status(
+    sonarr: StatusSonarrClient,
+    jellyfin: StatusJellyfinClient,
+    *,
+    plan: DownloadPlan,
+) -> CombinedRequestStatusResult:
+    """Combine current Sonarr progress with Jellyfin visibility for imports only."""
+    sonarr_status = await get_request_status(sonarr, plan=plan)
+    imported = tuple(
+        item for item in sonarr_status.episodes if item.state is RequestEpisodeState.IMPORTED
+    )
+
+    library: JellyfinLibraryAvailability | None = None
+    if imported:
+        library = await jellyfin.get_library_availability(
+            tvdb_id=plan.tvdb_id,
+            title=plan.show_title,
+            year=plan.show_year,
+        )
+
+    episodes = tuple(
+        CombinedRequestEpisodeStatus(
+            sonarr=item,
+            jellyfin_state=(
+                library.episode_availability(*item.planned_episode.coordinate)
+                if item.state is RequestEpisodeState.IMPORTED and library is not None
+                else None
+            ),
+        )
+        for item in sonarr_status.episodes
+    )
+    jellyfin_state = library.state if library is not None else None
+    return CombinedRequestStatusResult(
+        sonarr=sonarr_status,
+        jellyfin_state=jellyfin_state,
+        state=_classify_combined_status(episodes, jellyfin_state),
+        episodes=episodes,
+    )
 
 
 async def get_request_status(
@@ -369,6 +497,27 @@ def _classify_episode(
     if episode.monitored:
         return RequestEpisodeState.MISSING
     return RequestEpisodeState.PLANNED
+
+
+def _classify_combined_status(
+    episodes: tuple[CombinedRequestEpisodeStatus, ...],
+    jellyfin_state: JellyfinLibraryState | None,
+) -> RequestOverallState:
+    if any(
+        item.sonarr.errors
+        or item.sonarr.state in {RequestEpisodeState.WARNING, RequestEpisodeState.FAILED}
+        for item in episodes
+    ):
+        return RequestOverallState.FAILED
+    if jellyfin_state is JellyfinLibraryState.UNAVAILABLE:
+        return RequestOverallState.DEGRADED
+    if all(
+        item.sonarr.state is RequestEpisodeState.IMPORTED
+        and item.jellyfin_state is JellyfinEpisodeAvailabilityState.VISIBLE
+        for item in episodes
+    ):
+        return RequestOverallState.COMPLETE
+    return RequestOverallState.ACTIVE
 
 
 def _validate_optional_command_id(value: int | None) -> int | None:

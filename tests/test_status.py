@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import asyncio
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 
 from wit.clients import (
+    JellyfinEpisodeAvailabilityState,
+    JellyfinLibraryAvailability,
+    JellyfinLibraryState,
+    JellyfinSeries,
+    JellyfinSeriesMatchMethod,
     SonarrCommandFailedError,
     SonarrCommandRejectedError,
     SonarrCommandState,
@@ -24,11 +30,31 @@ from wit.status import (
     RequestEpisodeError,
     RequestEpisodeErrorKind,
     RequestEpisodeState,
+    RequestOverallState,
     RequestStatusResult,
+    get_combined_request_status,
     get_request_status,
 )
 
 _PRIVATE_COMMAND_DETAIL = "private-command-" + ("x" * 24)
+
+
+class _FakeStatusJellyfinClient:
+    """Records the bounded Jellyfin lookup used only after Sonarr import."""
+
+    def __init__(self, availability: JellyfinLibraryAvailability) -> None:
+        self.availability = availability
+        self.calls: list[tuple[int, str, int | None]] = []
+
+    async def get_library_availability(
+        self,
+        *,
+        tvdb_id: int,
+        title: str,
+        year: int | None,
+    ) -> JellyfinLibraryAvailability:
+        self.calls.append((tvdb_id, title, year))
+        return self.availability
 
 
 class _FakeStatusSonarrClient:
@@ -132,6 +158,27 @@ def _queue_item(
         series_id=series_id,
         episode_id=episode_id,
         state=state,
+    )
+
+
+def _jellyfin_availability(
+    state: JellyfinLibraryState,
+    *coordinates: tuple[int, int],
+) -> JellyfinLibraryAvailability:
+    series = (
+        JellyfinSeries(
+            jellyfin_id=UUID("11111111-1111-1111-1111-111111111111"),
+            title="Clockwork Harbor",
+            year=2024,
+            matched_by=JellyfinSeriesMatchMethod.TVDB_ID,
+        )
+        if state is JellyfinLibraryState.AVAILABLE
+        else None
+    )
+    return JellyfinLibraryAvailability(
+        state=state,
+        series=series,
+        episode_coordinates=tuple(sorted(coordinates)),
     )
 
 
@@ -334,6 +381,83 @@ def test_series_not_yet_in_sonarr_leaves_every_stored_episode_planned() -> None:
     assert all(item.monitored is None and item.has_file is None for item in result.episodes)
     assert all(item.errors == () for item in result.episodes)
     assert client.calls == [("find-series", 31415)]
+
+
+def test_combined_status_checks_jellyfin_only_for_sonarr_imports() -> None:
+    sonarr = _FakeStatusSonarrClient(
+        series=_series(),
+        episodes=(
+            _episode(1, has_file=True),
+            _episode(2),
+        ),
+    )
+    jellyfin = _FakeStatusJellyfinClient(
+        _jellyfin_availability(JellyfinLibraryState.AVAILABLE, (1, 1))
+    )
+
+    result = asyncio.run(get_combined_request_status(sonarr, jellyfin, plan=_plan(2)))
+
+    assert result.state is RequestOverallState.ACTIVE
+    assert result.imported_count == 1
+    assert result.visible_count == 1
+    assert result.episodes[0].jellyfin_state is JellyfinEpisodeAvailabilityState.VISIBLE
+    assert result.episodes[1].jellyfin_state is None
+    assert not result.operational_failure
+    assert jellyfin.calls == [(31415, "Clockwork Harbor", 2024)]
+
+
+def test_combined_status_skips_jellyfin_when_nothing_is_imported() -> None:
+    sonarr = _FakeStatusSonarrClient(
+        series=_series(),
+        episodes=(_episode(1),),
+        queue=(_queue_item(801, 101, SonarrQueueState.DOWNLOADING),),
+    )
+    jellyfin = _FakeStatusJellyfinClient(_jellyfin_availability(JellyfinLibraryState.UNAVAILABLE))
+
+    result = asyncio.run(get_combined_request_status(sonarr, jellyfin, plan=_plan(1)))
+
+    assert result.state is RequestOverallState.ACTIVE
+    assert result.jellyfin_state is None
+    assert result.episodes[0].jellyfin_state is None
+    assert jellyfin.calls == []
+
+
+def test_combined_status_is_complete_only_when_every_import_is_visible() -> None:
+    sonarr = _FakeStatusSonarrClient(
+        series=_series(),
+        episodes=(
+            _episode(1, has_file=True),
+            _episode(2, has_file=True),
+        ),
+    )
+    jellyfin = _FakeStatusJellyfinClient(
+        _jellyfin_availability(
+            JellyfinLibraryState.AVAILABLE,
+            (1, 1),
+            (1, 2),
+        )
+    )
+
+    result = asyncio.run(get_combined_request_status(sonarr, jellyfin, plan=_plan(2)))
+
+    assert result.state is RequestOverallState.COMPLETE
+    assert result.imported_count == 2
+    assert result.visible_count == 2
+    assert not result.operational_failure
+
+
+def test_combined_status_treats_unavailable_jellyfin_as_nonfailing_degradation() -> None:
+    sonarr = _FakeStatusSonarrClient(
+        series=_series(),
+        episodes=(_episode(1, has_file=True),),
+    )
+    jellyfin = _FakeStatusJellyfinClient(_jellyfin_availability(JellyfinLibraryState.UNAVAILABLE))
+
+    result = asyncio.run(get_combined_request_status(sonarr, jellyfin, plan=_plan(1)))
+
+    assert result.state is RequestOverallState.DEGRADED
+    assert result.episodes[0].jellyfin_state is JellyfinEpisodeAvailabilityState.UNAVAILABLE
+    assert not result.operational_failure
 
 
 @pytest.mark.parametrize("command_id", [0, -1, True, 2_147_483_648])

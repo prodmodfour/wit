@@ -18,6 +18,7 @@ from wit.apply import (
     validate_download_plan_age,
 )
 from wit.clients import (
+    JellyfinClient,
     ServiceHealthResult,
     ServiceHealthState,
     ServiceName,
@@ -35,6 +36,11 @@ from wit.planning import (
 )
 from wit.plans import DownloadPlan
 from wit.selection import EpisodeSelector, InvalidEpisodeSelectorError
+from wit.status import (
+    CombinedRequestStatusResult,
+    RequestOverallState,
+    get_combined_request_status,
+)
 
 _MAX_EPISODE_COORDINATE = 2_147_483_647
 _EPISODE_RANGE_PATTERN = re.compile(r"([1-9][0-9]{0,9})-([1-9][0-9]{0,9})\Z")
@@ -382,6 +388,16 @@ def _create_sonarr_client(settings: WitSettings) -> SonarrClient:
     )
 
 
+def _create_jellyfin_client(settings: WitSettings) -> JellyfinClient:
+    credential = settings.jellyfin.api_key
+    return JellyfinClient(
+        base_url=str(settings.jellyfin.url),
+        api_key=credential,
+        connect_timeout_seconds=settings.http.connect_timeout_seconds,
+        read_timeout_seconds=settings.http.read_timeout_seconds,
+    )
+
+
 def _is_interactive_input() -> bool:
     try:
         return bool(sys.stdin.isatty())
@@ -446,6 +462,86 @@ def _render_apply_counts(
     typer.echo(f"Skipped-file: {skipped_file}")
     typer.echo(f"Skipped-queue: {skipped_queue}")
     typer.echo(f"Rejected: {rejected}")
+
+
+@app.command("status")
+def status_command(
+    plan_id: Annotated[
+        str,
+        typer.Argument(help="Stored download-plan ID whose progress should be inspected."),
+    ],
+) -> None:
+    """Show read-only Sonarr progress and Jellyfin visibility for one plan."""
+    try:
+        settings = load_settings()
+    except ConfigurationError as error:
+        typer.echo(f"Status failed: {error}")
+        typer.echo(
+            "Next step: set the required WIT_* values or WIT_CONFIG_FILE; "
+            "see docs/configuration.md."
+        )
+        raise typer.Exit(code=1) from None
+
+    try:
+        plan = PlanStore(settings.state_dir).load(plan_id)
+    except WitError as error:
+        typer.echo(f"Status failed: {error}")
+        raise typer.Exit(code=1) from None
+
+    try:
+        result = asyncio.run(_get_status_for_plan(settings, plan))
+    except WitError as error:
+        typer.echo(f"Status failed: {error}")
+        raise typer.Exit(code=1) from None
+
+    _render_request_status(plan, result)
+    if result.operational_failure:
+        raise typer.Exit(code=1)
+
+
+async def _get_status_for_plan(
+    settings: WitSettings,
+    plan: DownloadPlan,
+) -> CombinedRequestStatusResult:
+    async with _create_sonarr_client(settings) as sonarr:
+        async with _create_jellyfin_client(settings) as jellyfin:
+            return await get_combined_request_status(sonarr, jellyfin, plan=plan)
+
+
+def _render_request_status(
+    plan: DownloadPlan,
+    result: CombinedRequestStatusResult,
+) -> None:
+    show_year = str(plan.show_year) if plan.show_year is not None else "year unknown"
+    typer.echo(f"Plan status: {result.plan_id}")
+    typer.echo(f"Show: {_safe_terminal_text(plan.show_title)} ({show_year})")
+    typer.echo(f"Episodes ({len(result.episodes)}):")
+    for combined in result.episodes:
+        episode = combined.sonarr
+        planned = episode.planned_episode
+        typer.echo(f"  {planned.label}  {_safe_terminal_text(planned.title)}")
+        typer.echo(f"    Sonarr: {episode.state.value}")
+        if combined.jellyfin_state is None:
+            typer.echo("    Jellyfin: not checked (Sonarr has not imported this episode)")
+        else:
+            jellyfin_state = combined.jellyfin_state.value.replace("-", " ")
+            typer.echo(f"    Jellyfin: {jellyfin_state}")
+        for error in episode.errors:
+            typer.echo(f"    Detail ({error.kind.value}): {_safe_terminal_text(error.detail)}")
+
+    typer.echo(f"Sonarr imported: {result.imported_count}/{len(result.episodes)}")
+    typer.echo(f"Jellyfin visible: {result.visible_count}/{result.imported_count} imported")
+    typer.echo(f"Overall: {result.state.value.upper()} - {_request_status_summary(result.state)}")
+
+
+def _request_status_summary(state: RequestOverallState) -> str:
+    if state is RequestOverallState.COMPLETE:
+        return "all planned episodes are imported and visible in Jellyfin"
+    if state is RequestOverallState.DEGRADED:
+        return "Jellyfin is unavailable; Sonarr progress is still shown"
+    if state is RequestOverallState.FAILED:
+        return "Sonarr reports a failure, warning, or inconsistent episode mapping"
+    return "the request is incomplete; no operational failure was detected"
 
 
 @app.command()

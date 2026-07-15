@@ -1,6 +1,6 @@
 # Wit runtime configuration
 
-Wit's typed configuration layer reads runtime values from the process environment or from one explicitly selected TOML file. It does not discover a repository `.env` file and does not accept credentials as CLI arguments. The read-only `wit doctor` and `wit plan` commands and the explicitly confirmed `wit apply` command consume these settings.
+Wit's typed configuration layer reads runtime values from the process environment or from one explicitly selected TOML file. It does not discover a repository `.env` file and does not accept credentials as CLI arguments. The read-only `wit doctor`, `wit plan`, and `wit status` commands and the explicitly confirmed `wit apply` command consume these settings.
 
 ## Environment settings
 
@@ -43,13 +43,15 @@ wit doctor
 
 The command prints a safe action for missing paths, unavailable services, authentication failures, and unhealthy responses. It never prints API credential values. Exit status `0` means every required local and service check passed; exit status `1` means at least one required check failed.
 
-## Jellyfin library lookup
+## Inspect a stored request
 
-Wit's Jellyfin client has a read-only catalogue lookup for the planned status workflow; there is not yet a `wit status` command. It first compares the plan's TVDB ID with Jellyfin's `ProviderIds` metadata. Jellyfin 10.11 does not expose an exact provider-ID value filter on its `Items` endpoint, so Wit paginates TVDB-tagged series and performs the exact comparison locally.
+`wit status <plan-id>` strictly loads one saved plan, reads current Sonarr episode and queue state, and prints an acquisition/import classification for every planned coordinate. It then uses Jellyfin only when at least one planned episode is imported in Sonarr, reporting viewer visibility for each such episode. The command performs no monitoring change, search, queue cancellation, or Jellyfin library scan.
 
-If no TVDB match exists, Wit uses the title/year fallback only when the plan has a known year. The fallback requires one candidate with the same year and a title equal after harmless case, punctuation, and whitespace normalisation. A candidate carrying a different or malformed TVDB ID is never accepted by fallback, and duplicate external-ID or title/year candidates fail as ambiguous rather than being guessed.
+The Jellyfin lookup first compares the plan's TVDB ID with Jellyfin's `ProviderIds` metadata. Jellyfin 10.11 does not expose an exact provider-ID value filter on its `Items` endpoint, so Wit paginates TVDB-tagged series and performs the exact comparison locally. If no TVDB match exists, Wit uses the title/year fallback only when the plan has a known year. The fallback requires one candidate with the same year and a title equal after harmless case, punctuation, and whitespace normalisation. A candidate carrying a different or malformed TVDB ID is never accepted by fallback, and duplicate external-ID or title/year candidates fail as ambiguous rather than being guessed.
 
-Series and episode queries use authenticated `GET` requests only, exclude virtual, missing, and placeholder episodes, and never trigger a Jellyfin library scan. Results distinguish an unavailable Jellyfin server, an absent series, an absent episode coordinate, and a visible episode coordinate. Each paginated series or episode query is limited to 5,000 items; exceeding that safety bound fails explicitly instead of returning a partial result.
+Series and episode queries use authenticated `GET` requests only, exclude virtual, missing, and placeholder episodes, and are limited to 5,000 items per paginated lookup. Exceeding that safety bound fails explicitly instead of returning a partial result. Results distinguish an unavailable Jellyfin server, an absent series, an absent episode coordinate, and a visible episode coordinate.
+
+The overall status is `ACTIVE` for ordinary incomplete work, `COMPLETE` when all imports are visible, `DEGRADED` when Jellyfin is unavailable after Sonarr status succeeds, and `FAILED` for Sonarr warnings, failures, or mapping inconsistencies. Incomplete downloads and degraded Jellyfin visibility do not by themselves produce a failing exit code. Invalid configuration or plans, service reads that cannot complete, and `FAILED` Sonarr results exit non-zero.
 
 ## Create a read-only plan
 

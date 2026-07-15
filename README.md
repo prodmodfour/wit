@@ -19,7 +19,7 @@ Pi / operator -> wit CLI -> Sonarr -> download client -> TV library -> Jellyfin
 
 ## Status
 
-Wit is currently in early autonomous development, not a complete media application yet. The installable CLI supports `wit --help`, `wit --version`, the read-only `wit doctor` diagnostics, read-only `wit plan`, and explicitly confirmed `wit apply`; request status remains planned. The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md).
+Wit is currently in early autonomous development, not a complete media application yet. The installable CLI supports `wit --help`, `wit --version`, the read-only `wit doctor` diagnostics, read-only `wit plan`, explicitly confirmed `wit apply`, and read-only `wit status`. The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md).
 
 Each successful build ticket is deliberately sized for one focused conventional commit.
 
@@ -76,13 +76,17 @@ Episodes for which Sonarr already has a file are skipped. Episodes in queued, do
 
 The result reports `Applied`, `Skipped-file`, `Skipped-queue`, and `Rejected` counts independently, followed by the command ID or an explicit no-action value. Any rejected episode makes the command exit non-zero, while a no-op consisting only of safe file and queue skips succeeds.
 
-The planned status workflow will use the same plan ID:
+## Inspecting a stored request
+
+Use the same stored plan ID to inspect progress without changing either service:
 
 ```bash
 wit status <plan-id>
 ```
 
-`wit status` is not implemented yet.
+`wit status` shows a Sonarr state for every planned coordinate: `planned`, `queued`, `downloading`, `imported`, `missing`, `warning`, or `failed`. For episodes Sonarr reports as imported, it also shows whether the coordinate is visible in Jellyfin, whether the series or episode is absent, or whether Jellyfin is unavailable. Jellyfin is not queried when Sonarr has not imported any planned episode, and status never triggers a library scan.
+
+The overall result is `ACTIVE` while work or library visibility is incomplete, `COMPLETE` only when every planned episode is imported and visible, `DEGRADED` when Jellyfin is unavailable but Sonarr status succeeded, and `FAILED` for a Sonarr warning, failure, or inconsistent coordinate mapping. Active and degraded results exit with status `0`; configuration, plan loading, service-read failures, and a `FAILED` result exit non-zero. The command performs only bounded read operations and never changes monitoring, queues, or media.
 
 ## Responsible use
 
@@ -92,7 +96,7 @@ Never commit a real `.env`, API key, credential, private hostname, machine-speci
 
 ## Wit runtime configuration
 
-The typed configuration layer validates service URLs, Sonarr apply defaults, bounded HTTP timeouts, and the local XDG state path. Sonarr and Jellyfin API keys are accepted only through `WIT_*` environment values or an explicitly selected, owner-only TOML file; secret values are redacted from representations and configuration errors. `wit doctor` uses these settings for read-only diagnostics, `wit plan` uses only the TVmaze, timeout, and state values after validating the complete configuration, and confirmed `wit apply` uses the state store plus Sonarr settings. Credentials are never accepted as command arguments.
+The typed configuration layer validates service URLs, Sonarr apply defaults, bounded HTTP timeouts, and the local XDG state path. Sonarr and Jellyfin API keys are accepted only through `WIT_*` environment values or an explicitly selected, owner-only TOML file; secret values are redacted from representations and configuration errors. `wit doctor` uses these settings for read-only diagnostics, `wit plan` uses only the TVmaze, timeout, and state values after validating the complete configuration, confirmed `wit apply` uses the state store plus Sonarr settings, and `wit status` reads the state store, Sonarr, and Jellyfin. Credentials are never accepted as command arguments.
 
 See [`docs/configuration.md`](docs/configuration.md) for the complete variable list, protected-file format, precedence, validation rules, and the distinction from Compose's local `.env` file.
 
