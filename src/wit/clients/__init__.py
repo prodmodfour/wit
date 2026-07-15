@@ -3,7 +3,19 @@
 from wit.clients.health import ServiceHealthResult, ServiceHealthState, ServiceName
 from wit.clients.jellyfin import JellyfinClient
 from wit.clients.seerr import SeerrClient
-from wit.clients.sonarr import SonarrClient
+from wit.clients.sonarr import (
+    InvalidSonarrDefaultsError,
+    InvalidSonarrRequestError,
+    InvalidSonarrResponseError,
+    SonarrClient,
+    SonarrClientError,
+    SonarrLibraryDefaults,
+    SonarrQualityProfile,
+    SonarrRootFolder,
+    SonarrSeries,
+    SonarrSeriesLookupResult,
+    SonarrSeriesType,
+)
 from wit.clients.tvmaze import (
     InvalidTvmazeRequestError,
     InvalidTvmazeResponseError,
@@ -17,6 +29,9 @@ from wit.clients.tvmaze import (
 )
 
 __all__ = [
+    "InvalidSonarrDefaultsError",
+    "InvalidSonarrRequestError",
+    "InvalidSonarrResponseError",
     "InvalidTvmazeRequestError",
     "InvalidTvmazeResponseError",
     "JellyfinClient",
@@ -25,6 +40,13 @@ __all__ = [
     "ServiceHealthState",
     "ServiceName",
     "SonarrClient",
+    "SonarrClientError",
+    "SonarrLibraryDefaults",
+    "SonarrQualityProfile",
+    "SonarrRootFolder",
+    "SonarrSeries",
+    "SonarrSeriesLookupResult",
+    "SonarrSeriesType",
     "TvmazeClient",
     "TvmazeClientError",
     "TvmazeEpisode",
