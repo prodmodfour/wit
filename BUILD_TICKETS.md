@@ -399,7 +399,7 @@ Commit as one focused mutation-client commit.
 
 ## 017 — Add Sonarr episode listing and coordinate mapping
 
-Status: TODO
+Status: DONE
 
 Implement read-only episode retrieval and stable plan mapping.
 

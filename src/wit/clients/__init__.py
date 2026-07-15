@@ -9,6 +9,9 @@ from wit.clients.sonarr import (
     InvalidSonarrResponseError,
     SonarrClient,
     SonarrClientError,
+    SonarrEpisode,
+    SonarrEpisodeAirStatus,
+    SonarrEpisodeMappingError,
     SonarrLibraryDefaults,
     SonarrQualityProfile,
     SonarrRootFolder,
@@ -17,6 +20,7 @@ from wit.clients.sonarr import (
     SonarrSeriesLookupResult,
     SonarrSeriesNotFoundError,
     SonarrSeriesType,
+    map_episode_coordinate,
 )
 from wit.clients.tvmaze import (
     InvalidTvmazeRequestError,
@@ -43,6 +47,9 @@ __all__ = [
     "ServiceName",
     "SonarrClient",
     "SonarrClientError",
+    "SonarrEpisode",
+    "SonarrEpisodeAirStatus",
+    "SonarrEpisodeMappingError",
     "SonarrLibraryDefaults",
     "SonarrQualityProfile",
     "SonarrRootFolder",
@@ -58,4 +65,5 @@ __all__ = [
     "TvmazeEpisodeType",
     "TvmazeShow",
     "TvmazeShowSearchResult",
+    "map_episode_coordinate",
 ]

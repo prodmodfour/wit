@@ -1,7 +1,9 @@
-"""Typed Sonarr health, library, lookup, and bounded series-add operations."""
+"""Typed Sonarr health, library, episode, lookup, and bounded mutation operations."""
 
 from __future__ import annotations
 
+from collections.abc import Iterable
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
 
@@ -25,9 +27,11 @@ _MAX_NAME_LENGTH = 256
 _POSSIBLE_DUPLICATE_STATUS_CODES = frozenset({400, 409})
 
 SonarrIdentifier = Annotated[int, Field(gt=0, le=_MAX_IDENTIFIER)]
-SonarrSeasonNumber = Annotated[int, Field(ge=0)]
+SonarrSeasonNumber = Annotated[int, Field(ge=0, le=_MAX_IDENTIFIER)]
+SonarrEpisodeNumber = Annotated[int, Field(gt=0, le=_MAX_IDENTIFIER)]
 SonarrYear = Annotated[int, Field(ge=0, le=9999)]
 SonarrPath = Annotated[str, Field(min_length=1, max_length=_MAX_PATH_LENGTH)]
+SonarrTimestamp = Annotated[str, Field(max_length=64)]
 SonarrTitle = Annotated[str, Field(min_length=1, max_length=_MAX_TITLE_LENGTH)]
 SonarrName = Annotated[str, Field(min_length=1, max_length=_MAX_NAME_LENGTH)]
 SonarrHealthSeverity = Literal["notice", "warning", "error"]
@@ -54,12 +58,24 @@ class SonarrSeriesNotFoundError(SonarrClientError):
     """Sonarr could not resolve a requested stable series identity."""
 
 
+class SonarrEpisodeMappingError(SonarrClientError):
+    """A planned episode coordinate did not map to exactly one Sonarr episode."""
+
+
 class SonarrSeriesType(StrEnum):
     """Numbering modes supported by Sonarr series records."""
 
     STANDARD = "standard"
     DAILY = "daily"
     ANIME = "anime"
+
+
+class SonarrEpisodeAirStatus(StrEnum):
+    """Whether Sonarr's known UTC air time has passed."""
+
+    AIRED = "aired"
+    UNAIRED = "unaired"
+    UNKNOWN = "unknown"
 
 
 class _SonarrModel(BaseModel):
@@ -112,6 +128,18 @@ class SonarrSeriesAddResult(_SonarrModel):
 
     series: SonarrSeries
     created: bool
+
+
+class SonarrEpisode(_SonarrModel):
+    """The bounded episode state needed for mapping, apply, and status."""
+
+    episode_id: SonarrIdentifier
+    season_number: SonarrSeasonNumber
+    episode_number: SonarrEpisodeNumber
+    title: SonarrTitle
+    air_status: SonarrEpisodeAirStatus
+    monitored: bool
+    has_file: bool
 
 
 class _SonarrResponse(BaseModel):
@@ -186,6 +214,21 @@ class _SonarrAddedSeries(_SonarrExistingSeries):
     monitored: bool
     monitor_new_items: Literal["none"] = Field(alias="monitorNewItems")
     seasons: list[_SonarrAddedSeason]
+
+
+class _SonarrEpisode(_SonarrResponse):
+    id: SonarrIdentifier
+    series_id: SonarrIdentifier = Field(alias="seriesId")
+    season_number: SonarrSeasonNumber = Field(alias="seasonNumber")
+    episode_number: SonarrEpisodeNumber = Field(alias="episodeNumber")
+    title: SonarrTitle
+    air_date_utc: SonarrTimestamp | None = Field(default=None, alias="airDateUtc")
+    monitored: bool
+    has_file: bool = Field(alias="hasFile")
+
+
+class _SonarrEpisodeResponse(RootModel[list[_SonarrEpisode]]):
+    model_config = ConfigDict(strict=True)
 
 
 class SonarrClient(HttpServiceClient):
@@ -388,6 +431,33 @@ class SonarrClient(HttpServiceClient):
                 "Sonarr returned an invalid series-lookup response"
             ) from None
 
+    async def list_episodes(
+        self,
+        series_id: int,
+        *,
+        as_of: datetime | None = None,
+    ) -> tuple[SonarrEpisode, ...]:
+        """List every Sonarr episode for one series without changing its state."""
+        validated_series_id = _validate_identifier(series_id, "series")
+        reference_time = _validate_reference_time(as_of)
+        payload = await self._transport.request_json(
+            "GET",
+            "api/v3/episode",
+            params={"seriesId": validated_series_id},
+        )
+
+        try:
+            response = _SonarrEpisodeResponse.model_validate(payload)
+            if any(item.series_id != validated_series_id for item in response.root):
+                raise ValueError("episode response contained a different series")
+            if len({item.id for item in response.root}) != len(response.root):
+                raise ValueError("episode response contained duplicate IDs")
+            return tuple(_to_sonarr_episode(item, reference_time) for item in response.root)
+        except (ValidationError, ValueError):
+            raise InvalidSonarrResponseError(
+                "Sonarr returned an invalid episode-list response"
+            ) from None
+
     async def add_series_unmonitored(
         self,
         *,
@@ -449,6 +519,25 @@ class SonarrClient(HttpServiceClient):
         return SonarrSeriesAddResult(series=series, created=True)
 
 
+def map_episode_coordinate(
+    episodes: Iterable[SonarrEpisode],
+    coordinate: tuple[int, int],
+) -> int:
+    """Map one ``(season, episode)`` coordinate to exactly one Sonarr episode ID."""
+    season_number, episode_number = _validate_episode_coordinate(coordinate)
+    matches = [
+        episode.episode_id
+        for episode in episodes
+        if episode.season_number == season_number and episode.episode_number == episode_number
+    ]
+    label = f"S{season_number:02d}E{episode_number:02d}"
+    if not matches:
+        raise SonarrEpisodeMappingError(f"Sonarr episode coordinate {label} was not found")
+    if len(matches) != 1:
+        raise SonarrEpisodeMappingError(f"Sonarr episode coordinate {label} is ambiguous")
+    return matches[0]
+
+
 def _build_unmonitored_series_payload(
     series: SonarrSeriesLookupResult,
     defaults: SonarrLibraryDefaults,
@@ -486,6 +575,26 @@ def _to_sonarr_series(item: _SonarrExistingSeries) -> SonarrSeries:
     )
 
 
+def _to_sonarr_episode(item: _SonarrEpisode, reference_time: datetime) -> SonarrEpisode:
+    air_date_utc = _parse_optional_timestamp(item.air_date_utc)
+    if air_date_utc is None:
+        air_status = SonarrEpisodeAirStatus.UNKNOWN
+    elif air_date_utc <= reference_time:
+        air_status = SonarrEpisodeAirStatus.AIRED
+    else:
+        air_status = SonarrEpisodeAirStatus.UNAIRED
+
+    return SonarrEpisode(
+        episode_id=item.id,
+        season_number=item.season_number,
+        episode_number=item.episode_number,
+        title=_normalise_text(item.title),
+        air_status=air_status,
+        monitored=item.monitored,
+        has_file=item.has_file,
+    )
+
+
 def _validate_identifier(value: object, label: str) -> int:
     if (
         isinstance(value, bool)
@@ -495,6 +604,55 @@ def _validate_identifier(value: object, label: str) -> int:
     ):
         raise InvalidSonarrRequestError(f"Sonarr {label} ID must be a positive integer")
     return value
+
+
+def _validate_episode_coordinate(coordinate: object) -> tuple[int, int]:
+    if not isinstance(coordinate, tuple) or len(coordinate) != 2:
+        raise InvalidSonarrRequestError(
+            "Sonarr episode coordinate must be a (season, episode) integer pair"
+        )
+    season_number, episode_number = coordinate
+    if (
+        isinstance(season_number, bool)
+        or not isinstance(season_number, int)
+        or season_number < 0
+        or season_number > _MAX_IDENTIFIER
+        or isinstance(episode_number, bool)
+        or not isinstance(episode_number, int)
+        or episode_number <= 0
+        or episode_number > _MAX_IDENTIFIER
+    ):
+        raise InvalidSonarrRequestError(
+            "Sonarr episode coordinate must contain a non-negative season and positive episode"
+        )
+    return season_number, episode_number
+
+
+def _validate_reference_time(value: datetime | None) -> datetime:
+    if value is None:
+        return datetime.now(UTC)
+    if not isinstance(value, datetime) or value.tzinfo is None:
+        raise InvalidSonarrRequestError("Sonarr episode as-of time must be timezone-aware")
+    try:
+        if value.utcoffset() is None:
+            raise ValueError("missing UTC offset")
+        return value.astimezone(UTC)
+    except (OverflowError, ValueError):
+        raise InvalidSonarrRequestError(
+            "Sonarr episode as-of time must be timezone-aware"
+        ) from None
+
+
+def _parse_optional_timestamp(value: str | None) -> datetime | None:
+    if value is None or value == "":
+        return None
+    if value != value.strip():
+        raise ValueError("timestamp contains surrounding whitespace")
+    normalised = f"{value[:-1]}+00:00" if value.endswith("Z") else value
+    parsed = datetime.fromisoformat(normalised)
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError("timestamp has no timezone")
+    return parsed.astimezone(UTC)
 
 
 def _normalise_text(value: str) -> str:
