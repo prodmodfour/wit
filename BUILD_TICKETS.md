@@ -446,7 +446,7 @@ Commit as one focused domain-logic commit.
 
 ## 019 — Add the versioned download-plan model
 
-Status: TODO
+Status: DONE
 
 Define the immutable, secret-free plan exchanged between planning and apply.
 
