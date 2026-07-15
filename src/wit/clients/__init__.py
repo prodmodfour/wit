@@ -1,7 +1,19 @@
 """Typed clients for Wit's external services."""
 
 from wit.clients.health import ServiceHealthResult, ServiceHealthState, ServiceName
-from wit.clients.jellyfin import JellyfinClient
+from wit.clients.jellyfin import (
+    AmbiguousJellyfinSeriesError,
+    InvalidJellyfinRequestError,
+    InvalidJellyfinResponseError,
+    JellyfinClient,
+    JellyfinClientError,
+    JellyfinEpisodeAvailabilityState,
+    JellyfinLibraryAvailability,
+    JellyfinLibraryLimitError,
+    JellyfinLibraryState,
+    JellyfinSeries,
+    JellyfinSeriesMatchMethod,
+)
 from wit.clients.seerr import SeerrClient
 from wit.clients.sonarr import (
     InvalidSonarrDefaultsError,
@@ -44,12 +56,22 @@ from wit.clients.tvmaze import (
 )
 
 __all__ = [
+    "AmbiguousJellyfinSeriesError",
+    "InvalidJellyfinRequestError",
+    "InvalidJellyfinResponseError",
     "InvalidSonarrDefaultsError",
     "InvalidSonarrRequestError",
     "InvalidSonarrResponseError",
     "InvalidTvmazeRequestError",
     "InvalidTvmazeResponseError",
     "JellyfinClient",
+    "JellyfinClientError",
+    "JellyfinEpisodeAvailabilityState",
+    "JellyfinLibraryAvailability",
+    "JellyfinLibraryLimitError",
+    "JellyfinLibraryState",
+    "JellyfinSeries",
+    "JellyfinSeriesMatchMethod",
     "SeerrClient",
     "ServiceHealthResult",
     "ServiceHealthState",

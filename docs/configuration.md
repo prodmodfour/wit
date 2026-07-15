@@ -43,6 +43,14 @@ wit doctor
 
 The command prints a safe action for missing paths, unavailable services, authentication failures, and unhealthy responses. It never prints API credential values. Exit status `0` means every required local and service check passed; exit status `1` means at least one required check failed.
 
+## Jellyfin library lookup
+
+Wit's Jellyfin client has a read-only catalogue lookup for the planned status workflow; there is not yet a `wit status` command. It first compares the plan's TVDB ID with Jellyfin's `ProviderIds` metadata. Jellyfin 10.11 does not expose an exact provider-ID value filter on its `Items` endpoint, so Wit paginates TVDB-tagged series and performs the exact comparison locally.
+
+If no TVDB match exists, Wit uses the title/year fallback only when the plan has a known year. The fallback requires one candidate with the same year and a title equal after harmless case, punctuation, and whitespace normalisation. A candidate carrying a different or malformed TVDB ID is never accepted by fallback, and duplicate external-ID or title/year candidates fail as ambiguous rather than being guessed.
+
+Series and episode queries use authenticated `GET` requests only, exclude virtual, missing, and placeholder episodes, and never trigger a Jellyfin library scan. Results distinguish an unavailable Jellyfin server, an absent series, an absent episode coordinate, and a visible episode coordinate. Each paginated series or episode query is limited to 5,000 items; exceeding that safety bound fails explicitly instead of returning a partial result.
+
 ## Create a read-only plan
 
 `wit plan` validates the complete runtime configuration, but its network operations use only `WIT_TVMAZE_URL` and the bounded HTTP timeout settings. It searches and retrieves public TVmaze metadata and never contacts Sonarr, Jellyfin, or Seerr. The state directory may be absent before planning; the secure plan store creates it when saving.

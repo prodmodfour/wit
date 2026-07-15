@@ -652,7 +652,7 @@ Commit as one focused status-service commit.
 
 ## 028 — Add Jellyfin library availability lookup
 
-Status: TODO
+Status: DONE
 
 Implement read-only confirmation that imported episodes are visible to viewers.
 
