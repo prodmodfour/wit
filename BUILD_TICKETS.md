@@ -421,7 +421,7 @@ Commit as one focused episode-client commit.
 
 ## 018 — Add episode-selection rules
 
-Status: TODO
+Status: DONE
 
 Implement pure domain logic for selecting planned episodes.
 
