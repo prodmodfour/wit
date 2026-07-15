@@ -331,7 +331,7 @@ Commit as one focused metadata-client commit.
 
 ## 014 — Add deterministic show matching
 
-Status: TODO
+Status: DONE
 
 Implement title-match ranking without terminal or network dependencies.
 

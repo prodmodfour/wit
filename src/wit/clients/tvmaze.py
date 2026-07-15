@@ -59,10 +59,11 @@ class _MetadataModel(BaseModel):
 
 
 class TvmazeShow(_MetadataModel):
-    """Show identity and planning metadata returned by TVmaze."""
+    """Show identity and planning metadata, including any aliases known to Wit."""
 
     tvmaze_id: TvmazeIdentifier
     title: MetadataTitle
+    aliases: tuple[MetadataTitle, ...] = ()
     premiere_date: date | None
     tvdb_id: TvmazeIdentifier | None
     imdb_id: ImdbIdentifier | None
