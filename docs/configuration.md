@@ -1,6 +1,6 @@
 # Wit runtime configuration
 
-Wit's typed configuration layer reads runtime values from the process environment or from one explicitly selected TOML file. It does not discover a repository `.env` file and does not accept credentials as CLI arguments. The media-operation commands that will consume these settings are still under development.
+Wit's typed configuration layer reads runtime values from the process environment or from one explicitly selected TOML file. It does not discover a repository `.env` file and does not accept credentials as CLI arguments. The read-only `wit doctor` command consumes these settings; media-operation commands are still under development.
 
 ## Environment settings
 
@@ -26,6 +26,20 @@ Sonarr and Jellyfin need API keys for the API operations Wit will perform. TVmaz
 When `WIT_STATE_DIR` is absent, Wit uses `${XDG_STATE_HOME}/wit`. If `XDG_STATE_HOME` is unset, the fallback is `~/.local/state/wit`. A state path may not be relative, a filesystem root, a symbolic link, an existing non-directory, or contain `..` traversal.
 
 Service URLs must use `http` or `https` and include a host. Reverse-proxy path prefixes are supported, but credentials, query strings, and fragments in a base URL are rejected. Keep API keys in the environment itself, not in shell command arguments or shell history.
+
+## Diagnose configuration and connectivity
+
+The configured state directory must already exist and grant the current user read, write, and search access. For the default location, create it with owner-only permissions before the first diagnostic run:
+
+```bash
+mkdir -p "$HOME/.local/state/wit"
+chmod 700 "$HOME/.local/state/wit"
+wit doctor
+```
+
+`wit doctor` first loads and validates configuration. Invalid configuration stops the command before any service request. Once configuration is valid, the command inspects the state directory without creating or changing it and checks Sonarr, Jellyfin, and Seerr independently through their read-only health endpoints. A failure from one service does not prevent the other service results from being reported.
+
+The command prints a safe action for missing paths, unavailable services, authentication failures, and unhealthy responses. It never prints API credential values. Exit status `0` means every required local and service check passed; exit status `1` means at least one required check failed.
 
 ## Protected TOML file
 

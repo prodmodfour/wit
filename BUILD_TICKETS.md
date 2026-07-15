@@ -285,7 +285,7 @@ Commit as one focused client commit.
 
 ## 012 — Add the `wit doctor` command
 
-Status: TODO
+Status: DONE
 
 Expose configuration and connectivity diagnostics.
 

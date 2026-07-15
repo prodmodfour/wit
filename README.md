@@ -19,16 +19,25 @@ Pi / operator -> wit CLI -> Sonarr -> download client -> TV library -> Jellyfin
 
 ## Status
 
-Wit is currently in early autonomous development, not a working media application yet. The installable bootstrap CLI supports only `wit --help` and `wit --version`; the media commands below remain planned. The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md).
+Wit is currently in early autonomous development, not a working media application yet. The installable CLI supports `wit --help`, `wit --version`, and the read-only `wit doctor` diagnostics described below; planning, apply, and status commands remain planned. The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md).
 
 Each successful build ticket is deliberately sized for one focused conventional commit.
 
-## Intended workflow
+## Available diagnostics
 
-Once implemented, examples will look like:
+After supplying the documented runtime settings and creating the configured state directory, run:
 
 ```bash
 wit doctor
+```
+
+`wit doctor` validates configuration before making network requests, checks that the state directory exists with read, write, and search access, and reports Sonarr, Jellyfin, and Seerr health independently. It does not create directories or mutate services. The command exits with status `0` only when every required check passes and status `1` when configuration, a local path, or a service check fails. Diagnostic output names settings that need attention but never prints API credentials.
+
+## Intended media workflow
+
+Once the remaining commands are implemented, examples will look like:
+
+```bash
 wit plan "Example Show" --first 4
 wit apply <plan-id> --yes
 wit status <plan-id>
@@ -44,7 +53,7 @@ Never commit a real `.env`, API key, credential, private hostname, machine-speci
 
 ## Wit runtime configuration
 
-The typed configuration layer now validates service URLs, Sonarr apply defaults, bounded HTTP timeouts, and the local XDG state path. Sonarr and Jellyfin API keys are accepted only through `WIT_*` environment values or an explicitly selected, owner-only TOML file; secret values are redacted from representations and configuration errors. No media command consumes these settings yet.
+The typed configuration layer validates service URLs, Sonarr apply defaults, bounded HTTP timeouts, and the local XDG state path. Sonarr and Jellyfin API keys are accepted only through `WIT_*` environment values or an explicitly selected, owner-only TOML file; secret values are redacted from representations and configuration errors. `wit doctor` consumes these settings only for read-only diagnostics; mutating media commands are not implemented yet.
 
 See [`docs/configuration.md`](docs/configuration.md) for the complete variable list, protected-file format, precedence, validation rules, and the distinction from Compose's local `.env` file.
 
