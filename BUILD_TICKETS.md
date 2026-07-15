@@ -764,7 +764,7 @@ Commit as one focused integration-test commit.
 
 ## 033 — Add runtime Pi instructions to `AGENTS.md`
 
-Status: TODO
+Status: DONE
 
 Complete the non-build-loop operating instructions after the CLI contract is stable.
 
