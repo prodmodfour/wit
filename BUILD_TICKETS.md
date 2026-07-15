@@ -515,7 +515,7 @@ Commit as one focused command commit.
 
 ## 022 — Add Sonarr episode-monitoring operations
 
-Status: TODO
+Status: DONE
 
 Implement the monitoring mutation independently from orchestration.
 

@@ -142,6 +142,13 @@ class SonarrEpisode(_SonarrModel):
     has_file: bool
 
 
+class SonarrEpisodeMonitoringResult(_SonarrModel):
+    """Episode IDs Sonarr confirmed as monitored by one bounded mutation."""
+
+    episode_ids: tuple[SonarrIdentifier, ...]
+    monitored: Literal[True]
+
+
 class _SonarrResponse(BaseModel):
     model_config = ConfigDict(extra="ignore", strict=True)
 
@@ -228,6 +235,15 @@ class _SonarrEpisode(_SonarrResponse):
 
 
 class _SonarrEpisodeResponse(RootModel[list[_SonarrEpisode]]):
+    model_config = ConfigDict(strict=True)
+
+
+class _SonarrMonitoredEpisode(_SonarrResponse):
+    id: SonarrIdentifier
+    monitored: bool
+
+
+class _SonarrMonitoredEpisodeResponse(RootModel[list[_SonarrMonitoredEpisode]]):
     model_config = ConfigDict(strict=True)
 
 
@@ -458,6 +474,41 @@ class SonarrClient(HttpServiceClient):
                 "Sonarr returned an invalid episode-list response"
             ) from None
 
+    async def monitor_episodes(
+        self,
+        episode_ids: Iterable[int],
+    ) -> SonarrEpisodeMonitoringResult:
+        """Mark exactly the supplied episode IDs as monitored and verify the result."""
+        validated_episode_ids = _validate_episode_id_list(episode_ids)
+        payload = await self._transport.request_json(
+            "PUT",
+            "api/v3/episode/monitor",
+            json_body={
+                "episodeIds": list(validated_episode_ids),
+                "monitored": True,
+            },
+        )
+
+        try:
+            response = _SonarrMonitoredEpisodeResponse.model_validate(payload)
+            response_ids = tuple(item.id for item in response.root)
+            if (
+                len(response_ids) != len(validated_episode_ids)
+                or len(set(response_ids)) != len(response_ids)
+                or set(response_ids) != set(validated_episode_ids)
+                or any(not item.monitored for item in response.root)
+            ):
+                raise ValueError("episode-monitor response was inconsistent")
+        except (ValidationError, ValueError):
+            raise InvalidSonarrResponseError(
+                "Sonarr returned an invalid episode-monitor response"
+            ) from None
+
+        return SonarrEpisodeMonitoringResult(
+            episode_ids=validated_episode_ids,
+            monitored=True,
+        )
+
     async def add_series_unmonitored(
         self,
         *,
@@ -604,6 +655,20 @@ def _validate_identifier(value: object, label: str) -> int:
     ):
         raise InvalidSonarrRequestError(f"Sonarr {label} ID must be a positive integer")
     return value
+
+
+def _validate_episode_id_list(episode_ids: Iterable[int]) -> tuple[int, ...]:
+    try:
+        values = tuple(episode_ids)
+    except TypeError:
+        raise InvalidSonarrRequestError("Sonarr episode ID list is invalid") from None
+
+    if not values:
+        raise InvalidSonarrRequestError("Sonarr episode ID list must not be empty")
+    validated = tuple(_validate_identifier(value, "episode") for value in values)
+    if len(set(validated)) != len(validated):
+        raise InvalidSonarrRequestError("Sonarr episode ID list must contain unique IDs")
+    return validated
 
 
 def _validate_episode_coordinate(coordinate: object) -> tuple[int, int]:
