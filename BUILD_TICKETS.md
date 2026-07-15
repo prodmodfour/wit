@@ -308,7 +308,7 @@ Commit as one focused command commit.
 
 ## 013 — Add the TVmaze metadata client
 
-Status: TODO
+Status: DONE
 
 Implement read-only show and episode metadata retrieval for planning.
 
