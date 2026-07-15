@@ -1,6 +1,6 @@
 # BUILD_TICKETS.md
 
-AUTOMATION_STATUS: NOT_DONE
+AUTOMATION_STATUS: DONE
 
 Ticket statuses:
 
@@ -830,7 +830,7 @@ Commit as one focused documentation-set commit.
 
 ## 099 — Final autonomous review and completion marker
 
-Status: TODO
+Status: DONE
 
 Perform a final repository review without adding new product scope.
 

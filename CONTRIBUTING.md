@@ -37,7 +37,7 @@ Run:
 scripts/quality-gate.sh
 ```
 
-The gate checks shell syntax and regression tests, secret/private-file guardrails, Ruff formatting and linting, mypy, pytest, the package environment, and Docker Compose configuration without starting services.
+The gate checks shell syntax and regression tests, secret/private-file guardrails, Ruff formatting and linting, mypy, pytest, a clean package build, and Docker Compose configuration without starting services.
 
 ## Commit and pull-request style
 

@@ -115,6 +115,8 @@ if [[ -f pyproject.toml ]]; then
     else
       pp_info "pytest tests not detected; skipping pytest."
     fi
+
+    run_cmd uv build --no-sources
   elif have python; then
     warn "uv not installed; running minimal Python syntax checks only"
     run_cmd python -m compileall -q .
