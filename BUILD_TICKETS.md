@@ -630,7 +630,7 @@ Commit as one focused safety commit.
 
 ## 027 — Add Sonarr-backed request status
 
-Status: TODO
+Status: DONE
 
 Create the application service that reports progress for a stored plan.
 
