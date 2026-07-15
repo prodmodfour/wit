@@ -674,7 +674,7 @@ Commit as one focused Jellyfin-client commit.
 
 ## 029 — Add the `wit status` command
 
-Status: TODO
+Status: DONE
 
 Expose combined plan progress for operators and Pi.
 
