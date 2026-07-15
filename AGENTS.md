@@ -114,31 +114,6 @@ These defaults exclude season zero, specials, future or otherwise unaired episod
 * Sonarr owns series, episode monitoring, targeted search, queue, download-client, and import operations. Wit talks to Sonarr rather than controlling qBittorrent directly.
 * Jellyfin owns the completed-media catalogue and playback. Use `wit status` to check whether Sonarr-imported episodes are visible there; playback itself happens in Jellyfin.
 
-## Safety rules
-
-Never commit:
-
-* real secrets
-* credentials
-* access tokens
-* private keys
-* real `.env` files
-* private data
-* internal hostnames
-* internal URLs
-* employer/client data
-* media-library records
-* download history
-* Terraform state
-* generated cloud plans
-* machine-specific configuration
-
-Do not add destructive automation unless the project brief explicitly allows it and the ticket specifically asks for it.
-
-Do not implement arbitrary code execution, shell execution, unsafe command execution, path traversal, or user-controlled subprocess construction.
-
-Do not expose administrative services publicly by default. Do not add source/indexer automation, DRM circumvention, credential extraction, or subscription-stream ripping.
-
 ## Documentation rules
 
 Update docs only when required by the selected ticket or when that ticket changes behaviour, setup, architecture, operations, security, limitations, or public-facing usage.
