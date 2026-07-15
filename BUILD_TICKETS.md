@@ -537,7 +537,7 @@ Commit as one focused mutation-client commit.
 
 ## 023 — Add targeted Sonarr episode-search operations
 
-Status: TODO
+Status: DONE
 
 Implement targeted search command submission and status parsing.
 

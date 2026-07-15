@@ -1,8 +1,9 @@
-"""Typed Sonarr health, library, episode, lookup, and bounded mutation operations."""
+"""Typed Sonarr health, library, episode, command, and bounded mutation operations."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import asyncio
+from collections.abc import Awaitable, Callable, Iterable
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Annotated, Literal
@@ -25,6 +26,9 @@ _MAX_PATH_LENGTH = 4096
 _MAX_TITLE_LENGTH = 512
 _MAX_NAME_LENGTH = 256
 _POSSIBLE_DUPLICATE_STATUS_CODES = frozenset({400, 409})
+_MIN_COMMAND_POLL_INTERVAL_SECONDS = 0.1
+_MAX_COMMAND_POLL_INTERVAL_SECONDS = 10.0
+_MAX_COMMAND_POLL_ATTEMPTS = 120
 
 SonarrIdentifier = Annotated[int, Field(gt=0, le=_MAX_IDENTIFIER)]
 SonarrSeasonNumber = Annotated[int, Field(ge=0, le=_MAX_IDENTIFIER)]
@@ -36,6 +40,21 @@ SonarrTitle = Annotated[str, Field(min_length=1, max_length=_MAX_TITLE_LENGTH)]
 SonarrName = Annotated[str, Field(min_length=1, max_length=_MAX_NAME_LENGTH)]
 SonarrHealthSeverity = Literal["notice", "warning", "error"]
 HealthSource = Annotated[str, Field(min_length=1, max_length=128)]
+SonarrCommandPollAttempts = Annotated[int, Field(ge=1, le=_MAX_COMMAND_POLL_ATTEMPTS)]
+SonarrCommandPollInterval = Annotated[
+    float,
+    Field(ge=_MIN_COMMAND_POLL_INTERVAL_SECONDS, le=_MAX_COMMAND_POLL_INTERVAL_SECONDS),
+]
+type _SonarrCommandStateValue = Literal[
+    "queued",
+    "started",
+    "completed",
+    "failed",
+    "aborted",
+    "cancelled",
+    "orphaned",
+]
+type _CommandPollSleeper = Callable[[float], Awaitable[None]]
 
 
 class SonarrClientError(WitError):
@@ -62,6 +81,18 @@ class SonarrEpisodeMappingError(SonarrClientError):
     """A planned episode coordinate did not map to exactly one Sonarr episode."""
 
 
+class SonarrCommandRejectedError(SonarrClientError):
+    """Sonarr rejected or terminally stopped an episode-search command."""
+
+
+class SonarrCommandFailedError(SonarrClientError):
+    """A submitted Sonarr episode-search command failed."""
+
+
+class SonarrCommandTimeoutError(SonarrClientError):
+    """A Sonarr episode-search command exceeded its bounded polling policy."""
+
+
 class SonarrSeriesType(StrEnum):
     """Numbering modes supported by Sonarr series records."""
 
@@ -76,6 +107,18 @@ class SonarrEpisodeAirStatus(StrEnum):
     AIRED = "aired"
     UNAIRED = "unaired"
     UNKNOWN = "unknown"
+
+
+class SonarrCommandState(StrEnum):
+    """States returned by Sonarr for a tracked command."""
+
+    QUEUED = "queued"
+    STARTED = "started"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    ABORTED = "aborted"
+    CANCELLED = "cancelled"
+    ORPHANED = "orphaned"
 
 
 class _SonarrModel(BaseModel):
@@ -147,6 +190,20 @@ class SonarrEpisodeMonitoringResult(_SonarrModel):
 
     episode_ids: tuple[SonarrIdentifier, ...]
     monitored: Literal[True]
+
+
+class SonarrCommandStatus(_SonarrModel):
+    """The bounded identity and state of one EpisodeSearch command."""
+
+    command_id: SonarrIdentifier
+    state: SonarrCommandState
+
+
+class SonarrCommandPollingPolicy(_SonarrModel):
+    """Limits for read-only command-status checks and the delay between them."""
+
+    max_attempts: SonarrCommandPollAttempts = 50
+    interval_seconds: SonarrCommandPollInterval = 0.5
 
 
 class _SonarrResponse(BaseModel):
@@ -245,6 +302,12 @@ class _SonarrMonitoredEpisode(_SonarrResponse):
 
 class _SonarrMonitoredEpisodeResponse(RootModel[list[_SonarrMonitoredEpisode]]):
     model_config = ConfigDict(strict=True)
+
+
+class _SonarrCommandResponse(_SonarrResponse):
+    id: SonarrIdentifier
+    name: Literal["EpisodeSearch"]
+    status: _SonarrCommandStateValue
 
 
 class SonarrClient(HttpServiceClient):
@@ -509,6 +572,75 @@ class SonarrClient(HttpServiceClient):
             monitored=True,
         )
 
+    async def submit_episode_search(
+        self,
+        episode_ids: Iterable[int],
+    ) -> SonarrCommandStatus:
+        """Submit one EpisodeSearch containing exactly the supplied episode IDs."""
+        validated_episode_ids = _validate_episode_id_list(episode_ids)
+        try:
+            payload = await self._transport.request_json(
+                "POST",
+                "api/v3/command",
+                json_body={
+                    "name": "EpisodeSearch",
+                    "episodeIds": list(validated_episode_ids),
+                },
+            )
+        except HttpStatusError as error:
+            if 400 <= error.status_code < 500:
+                raise SonarrCommandRejectedError(
+                    "Sonarr rejected EpisodeSearch command submission "
+                    f"with HTTP status {error.status_code}"
+                ) from None
+            raise
+
+        return _parse_episode_search_command(payload)
+
+    async def get_command_status(self, command_id: int) -> SonarrCommandStatus:
+        """Read and validate the current state of one EpisodeSearch command."""
+        validated_command_id = _validate_identifier(command_id, "command")
+        payload = await self._transport.request_json(
+            "GET",
+            f"api/v3/command/{validated_command_id}",
+        )
+        return _parse_episode_search_command(
+            payload,
+            expected_command_id=validated_command_id,
+        )
+
+    async def poll_command_status(
+        self,
+        command_id: int,
+        *,
+        policy: SonarrCommandPollingPolicy | None = None,
+        sleeper: _CommandPollSleeper | None = None,
+    ) -> SonarrCommandStatus:
+        """Poll one EpisodeSearch to completion within explicit request limits."""
+        validated_command_id = _validate_identifier(command_id, "command")
+        if policy is None:
+            effective_policy = SonarrCommandPollingPolicy()
+        elif isinstance(policy, SonarrCommandPollingPolicy):
+            effective_policy = policy
+        else:
+            raise InvalidSonarrRequestError("Sonarr command polling policy is invalid")
+
+        if sleeper is not None and not callable(sleeper):
+            raise InvalidSonarrRequestError("Sonarr command polling sleeper is invalid")
+        effective_sleeper: _CommandPollSleeper = asyncio.sleep if sleeper is None else sleeper
+
+        for attempt in range(effective_policy.max_attempts):
+            status = await self.get_command_status(validated_command_id)
+            if status.state is SonarrCommandState.COMPLETED:
+                return status
+            if attempt + 1 < effective_policy.max_attempts:
+                await effective_sleeper(effective_policy.interval_seconds)
+
+        raise SonarrCommandTimeoutError(
+            f"Sonarr EpisodeSearch command {validated_command_id} did not complete "
+            f"within {effective_policy.max_attempts} status checks"
+        )
+
     async def add_series_unmonitored(
         self,
         *,
@@ -587,6 +719,34 @@ def map_episode_coordinate(
     if len(matches) != 1:
         raise SonarrEpisodeMappingError(f"Sonarr episode coordinate {label} is ambiguous")
     return matches[0]
+
+
+def _parse_episode_search_command(
+    payload: JsonValue,
+    *,
+    expected_command_id: int | None = None,
+) -> SonarrCommandStatus:
+    try:
+        response = _SonarrCommandResponse.model_validate(payload)
+        if expected_command_id is not None and response.id != expected_command_id:
+            raise ValueError("command response identity was inconsistent")
+        state = SonarrCommandState(response.status)
+    except (ValidationError, ValueError):
+        raise InvalidSonarrResponseError(
+            "Sonarr returned an invalid EpisodeSearch command response"
+        ) from None
+
+    if state is SonarrCommandState.FAILED:
+        raise SonarrCommandFailedError(f"Sonarr EpisodeSearch command {response.id} failed")
+    if state in {
+        SonarrCommandState.ABORTED,
+        SonarrCommandState.CANCELLED,
+        SonarrCommandState.ORPHANED,
+    }:
+        raise SonarrCommandRejectedError(
+            f"Sonarr EpisodeSearch command {response.id} was rejected ({state.value})"
+        )
+    return SonarrCommandStatus(command_id=response.id, state=state)
 
 
 def _build_unmonitored_series_payload(
