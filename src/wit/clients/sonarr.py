@@ -1,4 +1,4 @@
-"""Typed Sonarr health, library, episode, command, and bounded mutation operations."""
+"""Typed Sonarr health, library, episode, command, queue, and mutation operations."""
 
 from __future__ import annotations
 
@@ -29,6 +29,8 @@ _POSSIBLE_DUPLICATE_STATUS_CODES = frozenset({400, 409})
 _MIN_COMMAND_POLL_INTERVAL_SECONDS = 0.1
 _MAX_COMMAND_POLL_INTERVAL_SECONDS = 10.0
 _MAX_COMMAND_POLL_ATTEMPTS = 120
+_QUEUE_PAGE_SIZE = 100
+_MAX_QUEUE_PAGES = 100
 
 SonarrIdentifier = Annotated[int, Field(gt=0, le=_MAX_IDENTIFIER)]
 SonarrSeasonNumber = Annotated[int, Field(ge=0, le=_MAX_IDENTIFIER)]
@@ -53,6 +55,29 @@ type _SonarrCommandStateValue = Literal[
     "aborted",
     "cancelled",
     "orphaned",
+]
+type _SonarrQueueStatusValue = Literal[
+    "unknown",
+    "queued",
+    "paused",
+    "downloading",
+    "completed",
+    "failed",
+    "warning",
+    "delay",
+    "downloadClientUnavailable",
+    "fallback",
+]
+type _SonarrTrackedDownloadStatusValue = Literal["ok", "warning", "error"]
+type _SonarrTrackedDownloadStateValue = Literal[
+    "downloading",
+    "importBlocked",
+    "importPending",
+    "importing",
+    "imported",
+    "failedPending",
+    "failed",
+    "ignored",
 ]
 type _CommandPollSleeper = Callable[[float], Awaitable[None]]
 
@@ -119,6 +144,16 @@ class SonarrCommandState(StrEnum):
     ABORTED = "aborted"
     CANCELLED = "cancelled"
     ORPHANED = "orphaned"
+
+
+class SonarrQueueState(StrEnum):
+    """Stable queue states used by apply safety and request status."""
+
+    QUEUED = "queued"
+    DOWNLOADING = "downloading"
+    IMPORTING = "importing"
+    WARNING = "warning"
+    FAILED = "failed"
 
 
 class _SonarrModel(BaseModel):
@@ -204,6 +239,15 @@ class SonarrCommandPollingPolicy(_SonarrModel):
 
     max_attempts: SonarrCommandPollAttempts = 50
     interval_seconds: SonarrCommandPollInterval = 0.5
+
+
+class SonarrQueueItem(_SonarrModel):
+    """One bounded queue item, including Sonarr identities when available."""
+
+    queue_id: SonarrIdentifier
+    series_id: SonarrIdentifier | None
+    episode_id: SonarrIdentifier | None
+    state: SonarrQueueState
 
 
 class _SonarrResponse(BaseModel):
@@ -308,6 +352,28 @@ class _SonarrCommandResponse(_SonarrResponse):
     id: SonarrIdentifier
     name: Literal["EpisodeSearch"]
     status: _SonarrCommandStateValue
+
+
+class _SonarrQueueRecord(_SonarrResponse):
+    id: SonarrIdentifier
+    series_id: SonarrIdentifier | None = Field(default=None, alias="seriesId")
+    episode_id: SonarrIdentifier | None = Field(default=None, alias="episodeId")
+    status: _SonarrQueueStatusValue
+    tracked_download_status: _SonarrTrackedDownloadStatusValue | None = Field(
+        default=None,
+        alias="trackedDownloadStatus",
+    )
+    tracked_download_state: _SonarrTrackedDownloadStateValue | None = Field(
+        default=None,
+        alias="trackedDownloadState",
+    )
+
+
+class _SonarrQueuePage(_SonarrResponse):
+    page: Annotated[int, Field(gt=0, le=_MAX_IDENTIFIER)]
+    page_size: Annotated[int, Field(gt=0, le=_MAX_IDENTIFIER)] = Field(alias="pageSize")
+    total_records: Annotated[int, Field(ge=0, le=_MAX_IDENTIFIER)] = Field(alias="totalRecords")
+    records: list[_SonarrQueueRecord]
 
 
 class SonarrClient(HttpServiceClient):
@@ -537,6 +603,66 @@ class SonarrClient(HttpServiceClient):
                 "Sonarr returned an invalid episode-list response"
             ) from None
 
+    async def list_queue(self) -> tuple[SonarrQueueItem, ...]:
+        """Retrieve every current queue item through bounded, verified pagination."""
+        queue_items: list[SonarrQueueItem] = []
+        seen_queue_ids: set[int] = set()
+        expected_page_size: int | None = None
+        expected_total_records: int | None = None
+
+        for requested_page in range(1, _MAX_QUEUE_PAGES + 1):
+            payload = await self._transport.request_json(
+                "GET",
+                "api/v3/queue",
+                params={
+                    "page": requested_page,
+                    "pageSize": _QUEUE_PAGE_SIZE,
+                    "includeUnknownSeriesItems": True,
+                },
+            )
+
+            try:
+                response = _SonarrQueuePage.model_validate(payload)
+                if response.page != requested_page:
+                    raise ValueError("queue response returned an unexpected page")
+                if len(response.records) > response.page_size:
+                    raise ValueError("queue page contained too many records")
+
+                if expected_page_size is None:
+                    expected_page_size = response.page_size
+                    expected_total_records = response.total_records
+                    if expected_total_records > expected_page_size * _MAX_QUEUE_PAGES:
+                        raise ValueError("queue response exceeded the pagination bound")
+                elif (
+                    response.page_size != expected_page_size
+                    or response.total_records != expected_total_records
+                ):
+                    raise ValueError("queue pagination metadata changed")
+
+                assert expected_page_size is not None
+                assert expected_total_records is not None
+                remaining_records = expected_total_records - len(queue_items)
+                expected_record_count = min(expected_page_size, remaining_records)
+                if len(response.records) != expected_record_count:
+                    raise ValueError("queue page did not contain all declared records")
+
+                page_ids = {item.id for item in response.records}
+                if len(page_ids) != len(response.records) or page_ids & seen_queue_ids:
+                    raise ValueError("queue response contained duplicate IDs")
+
+                page_items = tuple(_to_sonarr_queue_item(item) for item in response.records)
+            except (ValidationError, ValueError):
+                raise InvalidSonarrResponseError(
+                    "Sonarr returned an invalid queue response"
+                ) from None
+
+            queue_items.extend(page_items)
+            seen_queue_ids.update(page_ids)
+            if len(queue_items) == expected_total_records:
+                return tuple(queue_items)
+
+        raise InvalidSonarrResponseError("Sonarr returned an invalid queue response")
+
     async def monitor_episodes(
         self,
         episode_ids: Iterable[int],
@@ -747,6 +873,41 @@ def _parse_episode_search_command(
             f"Sonarr EpisodeSearch command {response.id} was rejected ({state.value})"
         )
     return SonarrCommandStatus(command_id=response.id, state=state)
+
+
+def _to_sonarr_queue_item(item: _SonarrQueueRecord) -> SonarrQueueItem:
+    return SonarrQueueItem(
+        queue_id=item.id,
+        series_id=item.series_id,
+        episode_id=item.episode_id,
+        state=_normalise_queue_state(item),
+    )
+
+
+def _normalise_queue_state(item: _SonarrQueueRecord) -> SonarrQueueState:
+    if (
+        item.status == "failed"
+        or item.tracked_download_status == "error"
+        or item.tracked_download_state in {"failedPending", "failed"}
+    ):
+        return SonarrQueueState.FAILED
+    if (
+        item.status in {"unknown", "warning", "downloadClientUnavailable", "fallback"}
+        or item.tracked_download_status == "warning"
+        or item.tracked_download_state in {"importBlocked", "ignored"}
+    ):
+        return SonarrQueueState.WARNING
+    if item.status == "completed" or item.tracked_download_state in {
+        "importPending",
+        "importing",
+        "imported",
+    }:
+        return SonarrQueueState.IMPORTING
+    if item.status == "downloading":
+        return SonarrQueueState.DOWNLOADING
+    if item.status in {"queued", "paused", "delay"}:
+        return SonarrQueueState.QUEUED
+    raise ValueError("queue state could not be normalised")
 
 
 def _build_unmonitored_series_payload(

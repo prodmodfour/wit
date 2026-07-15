@@ -559,7 +559,7 @@ Commit as one focused Sonarr-command commit.
 
 ## 024 — Add Sonarr queue inspection
 
-Status: TODO
+Status: DONE
 
 Implement the read-only queue data needed for safety and status.
 
