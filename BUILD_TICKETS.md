@@ -742,7 +742,7 @@ Commit as one focused integration-test commit.
 
 ## 032 — Add end-to-end apply and status contract tests
 
-Status: TODO
+Status: DONE
 
 Test the mutating path against deterministic fake Sonarr and Jellyfin services.
 
