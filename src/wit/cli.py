@@ -2,13 +2,21 @@
 
 import asyncio
 import re
+import sys
 from datetime import UTC, datetime
 from typing import Annotated
 
 import typer
 
 from wit import __version__
-from wit.clients import ServiceHealthResult, ServiceHealthState, ServiceName, TvmazeClient
+from wit.apply import ApplyPlanResult, apply_download_plan
+from wit.clients import (
+    ServiceHealthResult,
+    ServiceHealthState,
+    ServiceName,
+    SonarrClient,
+    TvmazeClient,
+)
 from wit.config import ConfigurationError, WitSettings, load_settings
 from wit.doctor import DoctorReport, LocalPathCheck, LocalPathState, run_doctor
 from wit.errors import WitError
@@ -238,6 +246,98 @@ def _safe_terminal_text(value: str) -> str:
     return "".join(
         character if ord(character) >= 32 and ord(character) != 127 else "?" for character in value
     )
+
+
+@app.command("apply")
+def apply_command(
+    plan_id: Annotated[
+        str,
+        typer.Argument(help="Stored download-plan ID to apply through Sonarr."),
+    ],
+    yes: Annotated[
+        bool,
+        typer.Option(
+            "--yes",
+            help="Confirm without prompting; required when standard input is not interactive.",
+        ),
+    ] = False,
+) -> None:
+    """Confirm and apply one stored plan with targeted Sonarr operations."""
+    try:
+        settings = load_settings()
+    except ConfigurationError as error:
+        typer.echo(f"Apply failed: {error}")
+        typer.echo(
+            "Next step: set the required WIT_* values or WIT_CONFIG_FILE; "
+            "see docs/configuration.md."
+        )
+        raise typer.Exit(code=1) from None
+
+    try:
+        plan = PlanStore(settings.state_dir).load(plan_id)
+    except WitError as error:
+        typer.echo(f"Apply failed: {error}")
+        raise typer.Exit(code=1) from None
+
+    # Re-render the immutable stored plan immediately before confirmation so an
+    # operator can verify every coordinate that will be sent to Sonarr.
+    typer.echo(plan.render())
+    if not yes:
+        if not _is_interactive_input():
+            typer.echo("Apply failed: non-interactive use requires --yes; no Sonarr changes made.")
+            raise typer.Exit(code=1)
+        if not typer.confirm("Apply this stored plan through Sonarr?", default=False):
+            typer.echo("Apply cancelled; no Sonarr changes made.")
+            raise typer.Exit(code=1)
+
+    try:
+        result = asyncio.run(_apply_plan_through_sonarr(settings, plan))
+    except WitError as error:
+        typer.echo(f"Apply failed: {error}")
+        raise typer.Exit(code=1) from None
+
+    _render_apply_result(result)
+
+
+async def _apply_plan_through_sonarr(
+    settings: WitSettings,
+    plan: DownloadPlan,
+) -> ApplyPlanResult:
+    async with _create_sonarr_client(settings) as client:
+        return await apply_download_plan(
+            client,
+            plan=plan,
+            root_folder_id=settings.sonarr.root_folder_id,
+            quality_profile_id=settings.sonarr.quality_profile_id,
+        )
+
+
+def _create_sonarr_client(settings: WitSettings) -> SonarrClient:
+    credential = settings.sonarr.api_key
+    return SonarrClient(
+        base_url=str(settings.sonarr.url),
+        api_key=credential,
+        connect_timeout_seconds=settings.http.connect_timeout_seconds,
+        read_timeout_seconds=settings.http.read_timeout_seconds,
+    )
+
+
+def _is_interactive_input() -> bool:
+    try:
+        return bool(sys.stdin.isatty())
+    except (AttributeError, OSError):
+        return False
+
+
+def _render_apply_result(result: ApplyPlanResult) -> None:
+    series_source = "newly added" if result.series_created else "existing"
+    episode_word = "episode" if result.episode_count == 1 else "episodes"
+    typer.echo(
+        f"Applied plan {result.plan_id}: monitored {result.episode_count} {episode_word} "
+        f"and submitted one targeted search using {series_source} Sonarr series "
+        f"{result.series.sonarr_id}."
+    )
+    typer.echo(f"Sonarr command ID: {result.command.command_id} ({result.command.state.value})")
 
 
 @app.command()

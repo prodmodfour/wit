@@ -581,7 +581,7 @@ Commit as one focused queue-client commit.
 
 ## 025 — Add `wit apply` orchestration
 
-Status: TODO
+Status: DONE
 
 Apply one stored plan through Sonarr with explicit confirmation.
 

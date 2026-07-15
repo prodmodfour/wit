@@ -19,7 +19,7 @@ Pi / operator -> wit CLI -> Sonarr -> download client -> TV library -> Jellyfin
 
 ## Status
 
-Wit is currently in early autonomous development, not a complete media application yet. The installable CLI supports `wit --help`, `wit --version`, the read-only `wit doctor` diagnostics, and the read-only `wit plan` workflow described below; apply and status commands remain planned. The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md).
+Wit is currently in early autonomous development, not a complete media application yet. The installable CLI supports `wit --help`, `wit --version`, the read-only `wit doctor` diagnostics, read-only `wit plan`, and explicitly confirmed `wit apply`; request status remains planned. The implementation queue is defined in [`BUILD_TICKETS.md`](BUILD_TICKETS.md), and the required outcome and safety boundaries are defined in [`PROJECT_BRIEF.md`](PROJECT_BRIEF.md).
 
 Each successful build ticket is deliberately sized for one focused conventional commit.
 
@@ -52,16 +52,33 @@ Wit chooses a show automatically only for a confident deterministic title match.
 
 The saved plan ID is printed after persistence. Plan files contain stable show identity and selected episode coordinates and titles, never service credentials or raw API responses.
 
-## Intended apply and status workflow
+## Applying a stored plan
 
-Once the remaining commands are implemented, the plan ID will be used like this:
+Apply only a previously saved plan. With an interactive terminal, Wit reprints every stored episode and asks for confirmation with a safe default of no:
+
+```bash
+wit apply <plan-id>
+```
+
+Automation and any other non-interactive invocation must provide the explicit confirmation flag:
 
 ```bash
 wit apply <plan-id> --yes
+```
+
+After confirmation, Wit asks Sonarr to find the TVDB series or add it with series, season, and episode monitoring disabled and without an automatic search. It fetches the current Sonarr episodes and maps every stored season/episode coordinate before changing any episode monitoring. A missing or ambiguous coordinate stops the operation without monitoring or searching only part of the plan. If the series had to be added before mapping could occur, it remains in Sonarr unmonitored after a mapping failure.
+
+Once all coordinates map, Wit monitors exactly those episode IDs and submits one targeted `EpisodeSearch`. The result identifies whether the Sonarr series was existing or newly added and prints the command ID and initial command state.
+
+Current limitation: apply does not yet skip episodes that already have files or are already queued. Reapplying the same plan can submit another targeted search, so do not repeat an apply without checking Sonarr directly until `wit status` and repeat-apply safeguards are implemented.
+
+The planned status workflow will use the same plan ID:
+
+```bash
 wit status <plan-id>
 ```
 
-Applying a plan will be explicit, narrowly targeted, and handled through Sonarr. These mutating and status commands are not implemented yet.
+`wit status` is not implemented yet.
 
 ## Responsible use
 
@@ -71,7 +88,7 @@ Never commit a real `.env`, API key, credential, private hostname, machine-speci
 
 ## Wit runtime configuration
 
-The typed configuration layer validates service URLs, Sonarr apply defaults, bounded HTTP timeouts, and the local XDG state path. Sonarr and Jellyfin API keys are accepted only through `WIT_*` environment values or an explicitly selected, owner-only TOML file; secret values are redacted from representations and configuration errors. `wit doctor` uses these settings for read-only diagnostics, while `wit plan` uses only the TVmaze, timeout, and state values after validating the complete configuration. Mutating media commands are not implemented yet.
+The typed configuration layer validates service URLs, Sonarr apply defaults, bounded HTTP timeouts, and the local XDG state path. Sonarr and Jellyfin API keys are accepted only through `WIT_*` environment values or an explicitly selected, owner-only TOML file; secret values are redacted from representations and configuration errors. `wit doctor` uses these settings for read-only diagnostics, `wit plan` uses only the TVmaze, timeout, and state values after validating the complete configuration, and confirmed `wit apply` uses the state store plus Sonarr settings. Credentials are never accepted as command arguments.
 
 See [`docs/configuration.md`](docs/configuration.md) for the complete variable list, protected-file format, precedence, validation rules, and the distinction from Compose's local `.env` file.
 

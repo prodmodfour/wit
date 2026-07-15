@@ -1,6 +1,6 @@
 # Wit runtime configuration
 
-Wit's typed configuration layer reads runtime values from the process environment or from one explicitly selected TOML file. It does not discover a repository `.env` file and does not accept credentials as CLI arguments. The read-only `wit doctor` and `wit plan` commands consume these settings; mutating media-operation commands are still under development.
+Wit's typed configuration layer reads runtime values from the process environment or from one explicitly selected TOML file. It does not discover a repository `.env` file and does not accept credentials as CLI arguments. The read-only `wit doctor` and `wit plan` commands and the explicitly confirmed `wit apply` command consume these settings.
 
 ## Environment settings
 
@@ -58,6 +58,32 @@ wit plan "Example Show" --all-aired
 ```
 
 Planning prints every selected episode before atomically saving the versioned, secret-free JSON file. It does not apply the plan or initiate media acquisition.
+
+## Apply a stored plan through Sonarr
+
+`wit apply` accepts only a stored plan ID; it does not accept a title, episode selector, API key, or other ad hoc mutation input. Wit strictly loads the corresponding plan from the configured state directory, reprints its complete contents, and then requires confirmation:
+
+```bash
+wit apply <plan-id>
+```
+
+The prompt is available only when standard input is an interactive terminal and defaults to no. A declined confirmation exits without contacting Sonarr. Scripts, pipes, agents, and other non-interactive callers must provide the explicit confirmation flag:
+
+```bash
+wit apply <plan-id> --yes
+```
+
+After confirmation, apply performs this bounded sequence:
+
+1. find the series by the plan's TVDB ID, or add it fully unmonitored with the configured Sonarr root-folder and quality-profile IDs and no automatic search;
+2. fetch the current Sonarr episode list;
+3. map every planned season/episode coordinate to exactly one Sonarr episode ID before changing episode monitoring;
+4. monitor exactly the complete mapped ID list; and
+5. submit one targeted `EpisodeSearch` for that same list.
+
+A missing or duplicate coordinate aborts before episode monitoring or search, so a subset of the plan is never applied. A series newly added before that mapping failure remains in Sonarr unmonitored. On success, the command prints the number of mapped episodes, whether the series was existing or newly added, and the Sonarr command ID and initial state.
+
+Current limitation: this apply implementation does not yet skip episodes with files or episodes already in Sonarr's queue. Reapplying a plan may submit another search. Avoid repeat apply until the planned idempotency safeguards and `wit status` command are available.
 
 ## Protected TOML file
 
