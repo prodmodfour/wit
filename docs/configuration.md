@@ -25,6 +25,8 @@ Sonarr and Jellyfin need API keys for the API operations Wit will perform. TVmaz
 
 When `WIT_STATE_DIR` is absent, Wit uses `${XDG_STATE_HOME}/wit`. If `XDG_STATE_HOME` is unset, the fallback is `~/.local/state/wit`. A state path may not be relative, a filesystem root, a symbolic link, an existing non-directory, or contain `..` traversal.
 
+Download plans are persisted as inspectable JSON at `<state-dir>/plans/<plan-id>.json`. The persistence layer creates the Wit and `plans` directories with mode `0700`, writes plan files with mode `0600`, and atomically replaces only complete files. It refuses traversal-style IDs, plan or directory symlinks, non-regular files, mismatched IDs, corrupt JSON, and unsupported plan schema versions. Listing considers only valid plan-shaped JSON filenames and does not return unrelated state-directory entries. The future `wit plan` command will use this store; no current CLI command writes a plan yet.
+
 Service URLs must use `http` or `https` and include a host. Reverse-proxy path prefixes are supported, but credentials, query strings, and fragments in a base URL are rejected. Keep API keys in the environment itself, not in shell command arguments or shell history.
 
 ## Diagnose configuration and connectivity

@@ -468,7 +468,7 @@ Commit as one focused model commit.
 
 ## 020 — Add the XDG plan store
 
-Status: TODO
+Status: DONE
 
 Persist and retrieve plans safely.
 
