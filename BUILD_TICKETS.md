@@ -720,7 +720,7 @@ Commit as one focused output-contract commit.
 
 ## 031 — Add end-to-end planning contract tests
 
-Status: TODO
+Status: DONE
 
 Test the complete read-only planning path with deterministic fake HTTP services.
 
