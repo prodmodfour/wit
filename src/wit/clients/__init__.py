@@ -13,7 +13,9 @@ from wit.clients.sonarr import (
     SonarrQualityProfile,
     SonarrRootFolder,
     SonarrSeries,
+    SonarrSeriesAddResult,
     SonarrSeriesLookupResult,
+    SonarrSeriesNotFoundError,
     SonarrSeriesType,
 )
 from wit.clients.tvmaze import (
@@ -45,7 +47,9 @@ __all__ = [
     "SonarrQualityProfile",
     "SonarrRootFolder",
     "SonarrSeries",
+    "SonarrSeriesAddResult",
     "SonarrSeriesLookupResult",
+    "SonarrSeriesNotFoundError",
     "SonarrSeriesType",
     "TvmazeClient",
     "TvmazeClientError",

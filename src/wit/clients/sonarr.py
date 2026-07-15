@@ -1,4 +1,4 @@
-"""Typed Sonarr health, library-default, and series-lookup operations."""
+"""Typed Sonarr health, library, lookup, and bounded series-add operations."""
 
 from __future__ import annotations
 
@@ -16,12 +16,13 @@ from wit.clients._base import (
 from wit.clients.health import ServiceHealthResult, ServiceHealthState, ServiceName, ServiceVersion
 from wit.config import DEFAULT_CONNECT_TIMEOUT_SECONDS, DEFAULT_READ_TIMEOUT_SECONDS
 from wit.errors import WitError
-from wit.transport import HttpTransport, HttpTransportError
+from wit.transport import HttpStatusError, HttpTransport, HttpTransportError, JsonValue
 
 _MAX_IDENTIFIER = 2_147_483_647
 _MAX_PATH_LENGTH = 4096
 _MAX_TITLE_LENGTH = 512
 _MAX_NAME_LENGTH = 256
+_POSSIBLE_DUPLICATE_STATUS_CODES = frozenset({400, 409})
 
 SonarrIdentifier = Annotated[int, Field(gt=0, le=_MAX_IDENTIFIER)]
 SonarrSeasonNumber = Annotated[int, Field(ge=0)]
@@ -47,6 +48,10 @@ class InvalidSonarrResponseError(SonarrClientError):
 
 class InvalidSonarrDefaultsError(SonarrClientError):
     """Configured Sonarr library defaults are absent or unusable."""
+
+
+class SonarrSeriesNotFoundError(SonarrClientError):
+    """Sonarr could not resolve a requested stable series identity."""
 
 
 class SonarrSeriesType(StrEnum):
@@ -100,6 +105,13 @@ class SonarrLibraryDefaults(_SonarrModel):
 
     root_folder: SonarrRootFolder
     quality_profile: SonarrQualityProfile
+
+
+class SonarrSeriesAddResult(_SonarrModel):
+    """A newly created or idempotently reused Sonarr series."""
+
+    series: SonarrSeries
+    created: bool
 
 
 class _SonarrResponse(BaseModel):
@@ -163,6 +175,17 @@ class _SonarrSeriesLookup(_SonarrResponse):
 
 class _SonarrSeriesLookupResponse(RootModel[list[_SonarrSeriesLookup]]):
     model_config = ConfigDict(strict=True)
+
+
+class _SonarrAddedSeason(_SonarrResponse):
+    season_number: SonarrSeasonNumber = Field(alias="seasonNumber")
+    monitored: bool
+
+
+class _SonarrAddedSeries(_SonarrExistingSeries):
+    monitored: bool
+    monitor_new_items: Literal["none"] = Field(alias="monitorNewItems")
+    seasons: list[_SonarrAddedSeason]
 
 
 class SonarrClient(HttpServiceClient):
@@ -325,13 +348,7 @@ class SonarrClient(HttpServiceClient):
                 return None
             if len(response.root) != 1 or response.root[0].tvdb_id != validated_tvdb_id:
                 raise ValueError("existing-series response was inconsistent")
-            item = response.root[0]
-            return SonarrSeries(
-                sonarr_id=item.id,
-                tvdb_id=item.tvdb_id,
-                title=_normalise_text(item.title),
-                year=item.year,
-            )
+            return _to_sonarr_series(response.root[0])
         except (ValidationError, ValueError):
             raise InvalidSonarrResponseError(
                 "Sonarr returned an invalid existing-series response"
@@ -371,8 +388,105 @@ class SonarrClient(HttpServiceClient):
                 "Sonarr returned an invalid series-lookup response"
             ) from None
 
+    async def add_series_unmonitored(
+        self,
+        *,
+        tvdb_id: int | None,
+        root_folder_id: int,
+        quality_profile_id: int,
+    ) -> SonarrSeriesAddResult:
+        """Find or add one TVDB series without monitoring or automatic search."""
+        validated_tvdb_id = _validate_identifier(tvdb_id, "TVDB")
+        validated_root_folder_id = _validate_identifier(root_folder_id, "root-folder")
+        validated_quality_profile_id = _validate_identifier(
+            quality_profile_id,
+            "quality-profile",
+        )
 
-def _validate_identifier(value: int, label: str) -> int:
+        existing = await self.find_series_by_tvdb_id(validated_tvdb_id)
+        if existing is not None:
+            return SonarrSeriesAddResult(series=existing, created=False)
+
+        resolved = await self.lookup_series_by_tvdb_id(validated_tvdb_id)
+        if resolved is None:
+            raise SonarrSeriesNotFoundError("Sonarr could not resolve the requested TVDB series")
+        defaults = await self.validate_library_defaults(
+            root_folder_id=validated_root_folder_id,
+            quality_profile_id=validated_quality_profile_id,
+        )
+
+        try:
+            payload = await self._transport.request_json(
+                "POST",
+                "api/v3/series",
+                json_body=_build_unmonitored_series_payload(resolved, defaults),
+            )
+        except HttpStatusError as error:
+            if error.status_code not in _POSSIBLE_DUPLICATE_STATUS_CODES:
+                raise
+            existing = await self.find_series_by_tvdb_id(validated_tvdb_id)
+            if existing is None:
+                raise
+            return SonarrSeriesAddResult(series=existing, created=False)
+
+        try:
+            response = _SonarrAddedSeries.model_validate(payload)
+            if response.tvdb_id != validated_tvdb_id:
+                raise ValueError("series-add response identity was inconsistent")
+            if response.monitored or response.monitor_new_items != "none":
+                raise ValueError("added series was unexpectedly monitored")
+            season_numbers = [season.season_number for season in response.seasons]
+            if len(set(season_numbers)) != len(season_numbers) or any(
+                season.monitored for season in response.seasons
+            ):
+                raise ValueError("added seasons were unexpectedly monitored or duplicated")
+            series = _to_sonarr_series(response)
+        except (ValidationError, ValueError):
+            raise InvalidSonarrResponseError(
+                "Sonarr returned an invalid series-add response"
+            ) from None
+
+        return SonarrSeriesAddResult(series=series, created=True)
+
+
+def _build_unmonitored_series_payload(
+    series: SonarrSeriesLookupResult,
+    defaults: SonarrLibraryDefaults,
+) -> dict[str, JsonValue]:
+    seasons: list[JsonValue] = [
+        {"seasonNumber": season_number, "monitored": False}
+        for season_number in series.season_numbers
+    ]
+    return {
+        "tvdbId": series.tvdb_id,
+        "title": series.title,
+        "year": series.year,
+        "seriesType": series.series_type.value,
+        "rootFolderPath": defaults.root_folder.path,
+        "qualityProfileId": defaults.quality_profile.quality_profile_id,
+        "seasonFolder": True,
+        "monitored": False,
+        "monitorNewItems": "none",
+        "seasons": seasons,
+        "tags": [],
+        "addOptions": {
+            "monitor": "none",
+            "searchForMissingEpisodes": False,
+            "searchForCutoffUnmetEpisodes": False,
+        },
+    }
+
+
+def _to_sonarr_series(item: _SonarrExistingSeries) -> SonarrSeries:
+    return SonarrSeries(
+        sonarr_id=item.id,
+        tvdb_id=item.tvdb_id,
+        title=_normalise_text(item.title),
+        year=item.year,
+    )
+
+
+def _validate_identifier(value: object, label: str) -> int:
     if (
         isinstance(value, bool)
         or not isinstance(value, int)

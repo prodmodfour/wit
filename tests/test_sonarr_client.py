@@ -1,8 +1,9 @@
-"""Mocked contracts for Sonarr library defaults and TVDB series lookups."""
+"""Mocked contracts for Sonarr library, lookup, and bounded add operations."""
 
 from __future__ import annotations
 
 import asyncio
+import json
 
 import httpx
 import pytest
@@ -16,12 +17,69 @@ from wit.clients import (
     SonarrQualityProfile,
     SonarrRootFolder,
     SonarrSeries,
+    SonarrSeriesAddResult,
     SonarrSeriesLookupResult,
+    SonarrSeriesNotFoundError,
     SonarrSeriesType,
 )
 
 _CREDENTIAL = "sonarr-contract-" + ("x" * 24)
 _PRIVATE_RESPONSE_VALUE = "private-upstream-sonarr-value"
+
+
+def _new_series_prerequisite_response(request: httpx.Request) -> httpx.Response:
+    assert request.method == "GET"
+    assert request.content == b""
+    if request.url.path == "/api/v3/series":
+        assert request.url.params["tvdbId"] == "31415"
+        return httpx.Response(200, json=[])
+    if request.url.path == "/api/v3/series/lookup":
+        assert request.url.params["term"] == "tvdb:31415"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "tvdbId": 31415,
+                    "title": "Clockwork Harbor",
+                    "year": 2021,
+                    "seriesType": "standard",
+                    "seasons": [
+                        {"seasonNumber": 2, "monitored": True},
+                        {"seasonNumber": 0, "monitored": True},
+                        {"seasonNumber": 1, "monitored": True},
+                    ],
+                    "overview": _PRIVATE_RESPONSE_VALUE,
+                }
+            ],
+        )
+    if request.url.path == "/api/v3/rootfolder":
+        return httpx.Response(
+            200,
+            json=[{"id": 7, "path": "/television", "accessible": True}],
+        )
+    if request.url.path == "/api/v3/qualityprofile":
+        return httpx.Response(200, json=[{"id": 8, "name": "Balanced"}])
+    raise AssertionError(f"unexpected Sonarr path: {request.url.path}")
+
+
+def _added_series_response(**updates: object) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "id": 42,
+        "tvdbId": 31415,
+        "title": "Clockwork Harbor",
+        "year": 2021,
+        "monitored": False,
+        "monitorNewItems": "none",
+        "seasons": [
+            {"seasonNumber": 0, "monitored": False},
+            {"seasonNumber": 1, "monitored": False},
+            {"seasonNumber": 2, "monitored": False},
+        ],
+        "path": "/television/Clockwork Harbor",
+        "overview": _PRIVATE_RESPONSE_VALUE,
+    }
+    payload.update(updates)
+    return payload
 
 
 def test_lists_and_validates_library_defaults_with_bounded_models() -> None:
@@ -410,3 +468,289 @@ def test_rejects_invalid_identifiers_before_contacting_sonarr() -> None:
 
     asyncio.run(scenario())
     assert requests == []
+
+
+def test_adds_resolved_series_fully_unmonitored_without_automatic_search() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.headers["X-Api-Key"] == _CREDENTIAL
+        if request.method == "POST":
+            assert request.url.path == "/api/v3/series"
+            assert request.url.query == b""
+            assert json.loads(request.content) == {
+                "tvdbId": 31415,
+                "title": "Clockwork Harbor",
+                "year": 2021,
+                "seriesType": "standard",
+                "rootFolderPath": "/television",
+                "qualityProfileId": 8,
+                "seasonFolder": True,
+                "monitored": False,
+                "monitorNewItems": "none",
+                "seasons": [
+                    {"seasonNumber": 0, "monitored": False},
+                    {"seasonNumber": 1, "monitored": False},
+                    {"seasonNumber": 2, "monitored": False},
+                ],
+                "tags": [],
+                "addOptions": {
+                    "monitor": "none",
+                    "searchForMissingEpisodes": False,
+                    "searchForCutoffUnmetEpisodes": False,
+                },
+            }
+            return httpx.Response(201, json=_added_series_response())
+        return _new_series_prerequisite_response(request)
+
+    async def scenario() -> None:
+        async with SonarrClient(
+            base_url="https://sonarr.example.test",
+            api_key=SecretStr(_CREDENTIAL),
+            http_transport=httpx.MockTransport(handler),
+        ) as client:
+            result = await client.add_series_unmonitored(
+                tvdb_id=31415,
+                root_folder_id=7,
+                quality_profile_id=8,
+            )
+
+        expected_series = SonarrSeries(
+            sonarr_id=42,
+            tvdb_id=31415,
+            title="Clockwork Harbor",
+            year=2021,
+        )
+        assert result == SonarrSeriesAddResult(series=expected_series, created=True)
+        assert result.model_dump() == {
+            "series": {
+                "sonarr_id": 42,
+                "tvdb_id": 31415,
+                "title": "Clockwork Harbor",
+                "year": 2021,
+            },
+            "created": True,
+        }
+        assert _PRIVATE_RESPONSE_VALUE not in repr(result)
+        assert _CREDENTIAL not in repr(result)
+
+    asyncio.run(scenario())
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("GET", "/api/v3/series"),
+        ("GET", "/api/v3/series/lookup"),
+        ("GET", "/api/v3/rootfolder"),
+        ("GET", "/api/v3/qualityprofile"),
+        ("POST", "/api/v3/series"),
+    ]
+    assert all("command" not in request.url.path for request in requests)
+    assert all("episode" not in request.url.path for request in requests)
+
+
+def test_returns_existing_series_idempotently_without_posting() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "GET"
+        assert request.url.path == "/api/v3/series"
+        assert request.url.params["tvdbId"] == "31415"
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "id": 91,
+                    "tvdbId": 31415,
+                    "title": "Clockwork Harbor",
+                    "year": 2021,
+                    "monitored": True,
+                    "overview": _PRIVATE_RESPONSE_VALUE,
+                }
+            ],
+        )
+
+    async def scenario() -> None:
+        async with SonarrClient(
+            base_url="https://sonarr.example.test",
+            api_key=SecretStr(_CREDENTIAL),
+            http_transport=httpx.MockTransport(handler),
+        ) as client:
+            result = await client.add_series_unmonitored(
+                tvdb_id=31415,
+                root_folder_id=7,
+                quality_profile_id=8,
+            )
+
+        assert result == SonarrSeriesAddResult(
+            series=SonarrSeries(
+                sonarr_id=91,
+                tvdb_id=31415,
+                title="Clockwork Harbor",
+                year=2021,
+            ),
+            created=False,
+        )
+        assert _PRIVATE_RESPONSE_VALUE not in repr(result)
+
+    asyncio.run(scenario())
+    assert len(requests) == 1
+
+
+def test_treats_a_concurrent_existing_series_as_idempotent() -> None:
+    requests: list[httpx.Request] = []
+    existing_checks = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal existing_checks
+        requests.append(request)
+        if request.method == "GET" and request.url.path == "/api/v3/series":
+            existing_checks += 1
+            if existing_checks == 1:
+                return httpx.Response(200, json=[])
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "id": 73,
+                        "tvdbId": 31415,
+                        "title": "Clockwork Harbor",
+                        "year": 2021,
+                    }
+                ],
+            )
+        if request.method == "POST":
+            assert request.url.path == "/api/v3/series"
+            return httpx.Response(409, json={"message": _PRIVATE_RESPONSE_VALUE})
+        return _new_series_prerequisite_response(request)
+
+    async def scenario() -> None:
+        async with SonarrClient(
+            base_url="https://sonarr.example.test",
+            api_key=SecretStr(_CREDENTIAL),
+            http_transport=httpx.MockTransport(handler),
+        ) as client:
+            result = await client.add_series_unmonitored(
+                tvdb_id=31415,
+                root_folder_id=7,
+                quality_profile_id=8,
+            )
+
+        assert result.series.sonarr_id == 73
+        assert result.created is False
+        assert _PRIVATE_RESPONSE_VALUE not in repr(result)
+
+    asyncio.run(scenario())
+    assert [(request.method, request.url.path) for request in requests] == [
+        ("GET", "/api/v3/series"),
+        ("GET", "/api/v3/series/lookup"),
+        ("GET", "/api/v3/rootfolder"),
+        ("GET", "/api/v3/qualityprofile"),
+        ("POST", "/api/v3/series"),
+        ("GET", "/api/v3/series"),
+    ]
+
+
+def test_rejects_missing_plan_tvdb_identity_before_contacting_sonarr() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500)
+
+    async def scenario() -> None:
+        async with SonarrClient(
+            base_url="https://sonarr.example.test",
+            api_key=SecretStr(_CREDENTIAL),
+            http_transport=httpx.MockTransport(handler),
+        ) as client:
+            await client.add_series_unmonitored(
+                tvdb_id=None,
+                root_folder_id=7,
+                quality_profile_id=8,
+            )
+
+    with pytest.raises(InvalidSonarrRequestError, match="TVDB ID") as captured:
+        asyncio.run(scenario())
+
+    assert _CREDENTIAL not in str(captured.value)
+    assert requests == []
+
+
+def test_rejects_a_tvdb_series_that_sonarr_cannot_resolve() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        assert request.method == "GET"
+        return httpx.Response(200, json=[])
+
+    async def scenario() -> None:
+        async with SonarrClient(
+            base_url="https://sonarr.example.test",
+            api_key=SecretStr(_CREDENTIAL),
+            http_transport=httpx.MockTransport(handler),
+        ) as client:
+            await client.add_series_unmonitored(
+                tvdb_id=31415,
+                root_folder_id=7,
+                quality_profile_id=8,
+            )
+
+    with pytest.raises(
+        SonarrSeriesNotFoundError,
+        match="could not resolve the requested TVDB series",
+    ) as captured:
+        asyncio.run(scenario())
+
+    assert _CREDENTIAL not in str(captured.value)
+    assert [request.url.path for request in requests] == [
+        "/api/v3/series",
+        "/api/v3/series/lookup",
+    ]
+
+
+@pytest.mark.parametrize(
+    "response_updates",
+    [
+        {"tvdbId": 99999},
+        {"monitored": True},
+        {"monitorNewItems": "all"},
+        {"seasons": [{"seasonNumber": 1, "monitored": True}]},
+        {
+            "seasons": [
+                {"seasonNumber": 1, "monitored": False},
+                {"seasonNumber": 1, "monitored": False},
+            ]
+        },
+    ],
+)
+def test_rejects_inconsistent_or_monitored_series_add_responses(
+    response_updates: dict[str, object],
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "POST":
+            return httpx.Response(201, json=_added_series_response(**response_updates))
+        return _new_series_prerequisite_response(request)
+
+    async def scenario() -> None:
+        async with SonarrClient(
+            base_url="https://sonarr.example.test",
+            api_key=SecretStr(_CREDENTIAL),
+            http_transport=httpx.MockTransport(handler),
+        ) as client:
+            await client.add_series_unmonitored(
+                tvdb_id=31415,
+                root_folder_id=7,
+                quality_profile_id=8,
+            )
+
+    with pytest.raises(InvalidSonarrResponseError) as captured:
+        asyncio.run(scenario())
+
+    assert str(captured.value) == "Sonarr returned an invalid series-add response"
+    assert _PRIVATE_RESPONSE_VALUE not in str(captured.value)
+    assert captured.value.__cause__ is None
+    assert requests[-1].method == "POST"

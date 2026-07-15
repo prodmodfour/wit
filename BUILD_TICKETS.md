@@ -377,7 +377,7 @@ Commit as one focused Sonarr-client commit.
 
 ## 016 — Add the unmonitored Sonarr series operation
 
-Status: TODO
+Status: DONE
 
 Implement the narrowly scoped series-add mutation used during apply.
 
