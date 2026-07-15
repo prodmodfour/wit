@@ -4,47 +4,6 @@ You are working in Wit, an autonomous, ticket-driven build and a future local me
 
 This file contains general rules. Project-specific requirements live in `PROJECT_BRIEF.md`.
 
-## Required reading
-
-Before making changes, read completely:
-
-* `AGENTS.md`
-* `PROJECT_BRIEF.md`
-* `BUILD_TICKETS.md`
-
-## Core build workflow
-
-When invoked by the build loop:
-
-1. Select the first `TODO` ticket in `BUILD_TICKETS.md` file order.
-2. Say what you are working on now, including the selected ticket and immediate action.
-3. Implement only that ticket.
-4. Do not start future tickets.
-5. Do not broaden scope.
-6. Add or update tests/validation required by that ticket.
-7. Add or update docs required by that ticket.
-8. Run `scripts/quality-gate.sh`.
-9. Update only the selected ticket status in `BUILD_TICKETS.md`.
-10. Commit the completed ticket with a conventional commit message.
-11. Leave the working tree clean.
-
-A successful ticket must produce exactly one focused commit. Do not combine multiple tickets in one commit and do not split unrelated work into the selected ticket.
-
-Do not add cycle notes, validation summaries, blocker notes, or other commentary to `BUILD_TICKETS.md`. It should contain ticket descriptions plus status only.
-
-The outer build loop handles pushing and optional PR/MR creation or merging when configured. Do not create or merge PRs/MRs from inside the agent run unless a ticket explicitly asks for it.
-
-## If blocked
-
-If you cannot complete the ticket safely:
-
-* print the blocker in the agent response
-* leave the ticket status as not done
-* do not add blocker notes to `BUILD_TICKETS.md`
-* do not mark it `DONE`
-* do not commit broken partial work
-* leave the working tree clean if possible
-
 
 
 ## Wit architecture boundaries
@@ -58,19 +17,11 @@ Maintain these responsibilities:
 * qBittorrent is the default Compose download client and is controlled by Sonarr, not directly by normal Wit commands.
 * TVmaze supplies read-only metadata used to make planning non-mutating.
 
-Preserve a strict plan/apply boundary:
-
-* planning is read-only
-* plans contain no secrets
-* apply requires a stored plan and explicit confirmation
-* apply maps every episode before making monitoring changes
-* ambiguous or inconsistent data fails safely
 
 ## Runtime/operator requests
 
 When Pi operates an already configured Wit installation, `wit` is the only supported control surface. Use `wit` commands instead of raw `curl`, direct service API calls, direct database edits, direct qBittorrent control, or ad hoc Docker commands. Prefer `--json` when Pi needs machine-readable output, and do not infer service state by inspecting media or state files.
 
-Pi must not inspect, read back, print, log, or ask the user to paste secret configuration. Do not open a real `.env` or protected Wit configuration file, dump relevant environment variables, query credentials from a service, or put credentials on a command line. Let `wit` load its configured secrets. If configuration or connectivity may be wrong, use the redacted output from `wit doctor` and ask the operator to repair configuration without sharing secret values.
 
 ### Command workflow
 
