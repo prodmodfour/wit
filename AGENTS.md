@@ -45,20 +45,7 @@ If you cannot complete the ticket safely:
 * do not commit broken partial work
 * leave the working tree clean if possible
 
-## Scope control
 
-Do not:
-
-* start future tickets
-* silently change project goals
-* rewrite unrelated code
-* add unnecessary dependencies
-* add speculative features
-* remove safety checks
-* bypass quality gates
-* commit generated/private files unless explicitly required
-* run or configure real media downloads during development
-* add indexers, trackers, provider presets, debrid integrations, or DRM workarounds
 
 ## Wit architecture boundaries
 
@@ -114,7 +101,7 @@ These defaults exclude season zero, specials, future or otherwise unaired episod
 * Sonarr owns series, episode monitoring, targeted search, queue, download-client, and import operations. Wit talks to Sonarr rather than controlling qBittorrent directly.
 * Jellyfin owns the completed-media catalogue and playback. Use `wit status` to check whether Sonarr-imported episodes are visible there; playback itself happens in Jellyfin.
 
-## Documentation rules
+Documentation rules
 
 Update docs only when required by the selected ticket or when that ticket changes behaviour, setup, architecture, operations, security, limitations, or public-facing usage.
 
@@ -132,40 +119,3 @@ Tests must be deterministic and offline. Use mocked/fake service responses; neve
 
 If project-specific validation is missing, improve it only when the selected ticket requires that change.
 
-## Commit style
-
-Use conventional commits:
-
-```text
-chore:
-feat:
-fix:
-test:
-docs:
-refactor:
-ci:
-build:
-```
-
-Examples:
-
-```text
-chore: bootstrap wit cli package
-feat: add aired episode selection
-feat: add sonarr episode search
-fix: redact service authentication failures
-test: cover repeat plan application
-docs: document local stack recovery
-ci: validate wit with uv
-```
-
-## Completion
-
-Wit is complete only when:
-
-* the final ticket is done
-* all quality gates pass
-* docs match implementation
-* safety constraints are respected
-* default service exposure remains local-first
-* the top-level `AUTOMATION_STATUS` in `BUILD_TICKETS.md` is set to `DONE`
