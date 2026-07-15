@@ -73,17 +73,31 @@ The prompt is available only when standard input is an interactive terminal and 
 wit apply <plan-id> --yes
 ```
 
+A plan is fresh for seven 24-hour days from its UTC creation time. An older plan is rejected before Sonarr access and all selected episodes are reported as rejected. After reviewing the rendered plan, explicitly add `--allow-stale` to bypass only this age check:
+
+```bash
+wit apply <plan-id> --yes --allow-stale
+```
+
 After confirmation, apply performs this bounded sequence:
 
 1. find the series by the plan's TVDB ID, or add it fully unmonitored with the configured Sonarr root-folder and quality-profile IDs and no automatic search;
-2. fetch the current Sonarr episode list;
-3. map every planned season/episode coordinate to exactly one Sonarr episode ID before changing episode monitoring;
-4. monitor exactly the complete mapped ID list; and
-5. submit one targeted `EpisodeSearch` for that same list.
+2. fetch the current Sonarr episode list and map every planned season/episode coordinate exactly once;
+3. fetch the complete Sonarr queue and classify every mapped episode before episode-level mutation;
+4. skip IDs that already have files or have queued, downloading, or importing queue records;
+5. reject IDs with matching warning or failed queue records instead of starting duplicate work;
+6. monitor only the remaining actionable IDs; and
+7. submit one targeted `EpisodeSearch` containing exactly those actionable IDs.
 
-A missing or duplicate coordinate aborts before episode monitoring or search, so a subset of the plan is never applied. A series newly added before that mapping failure remains in Sonarr unmonitored. On success, the command prints the number of mapped episodes, whether the series was existing or newly added, and the Sonarr command ID and initial state.
+A missing or duplicate coordinate aborts before queue inspection, episode monitoring, or search, so a subset of the plan is never applied. A series newly added before that mapping failure remains in Sonarr unmonitored. When no actionable IDs remain, apply is a successful no-op and neither monitoring nor search is submitted.
 
-Current limitation: this apply implementation does not yet skip episodes with files or episodes already in Sonarr's queue. Reapplying a plan may submit another search. Avoid repeat apply until the planned idempotency safeguards and `wit status` command are available.
+Wit treats harmless title case, punctuation, and whitespace differences as equivalent. Material current series-title, episode-title, or title/coordinate differences are shown before episode mutation and require a second interactive confirmation. A non-interactive caller must use both `--yes` and the separate metadata override:
+
+```bash
+wit apply <plan-id> --yes --allow-mismatch
+```
+
+The result prints separate `Applied`, `Skipped-file`, `Skipped-queue`, and `Rejected` counts. It prints a Sonarr command ID only when at least one episode was actionable. Warning or failed queue records remain under Sonarr's control; Wit does not cancel them, delete media, or silently resubmit them. A result with rejected episodes exits non-zero, while a no-op made entirely of file and active-queue skips exits successfully.
 
 ## Protected TOML file
 

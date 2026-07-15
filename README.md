@@ -66,11 +66,15 @@ Automation and any other non-interactive invocation must provide the explicit co
 wit apply <plan-id> --yes
 ```
 
-After confirmation, Wit asks Sonarr to find the TVDB series or add it with series, season, and episode monitoring disabled and without an automatic search. It fetches the current Sonarr episodes and maps every stored season/episode coordinate before changing any episode monitoring. A missing or ambiguous coordinate stops the operation without monitoring or searching only part of the plan. If the series had to be added before mapping could occur, it remains in Sonarr unmonitored after a mapping failure.
+By default, Wit rejects a plan more than seven 24-hour days old before contacting Sonarr. Review an intentionally delayed plan and add `--allow-stale` to override that age check; this flag does not replace the normal prompt or non-interactive `--yes` confirmation.
 
-Once all coordinates map, Wit monitors exactly those episode IDs and submits one targeted `EpisodeSearch`. The result identifies whether the Sonarr series was existing or newly added and prints the command ID and initial command state.
+After confirmation, Wit asks Sonarr to find the TVDB series or add it with series, season, and episode monitoring disabled and without an automatic search. It fetches the current Sonarr episodes, maps every stored season/episode coordinate, and reads the complete active queue before changing episode monitoring. A missing or ambiguous coordinate stops the operation without monitoring or searching only part of the plan. If the series had to be added before mapping could occur, it remains in Sonarr unmonitored after a mapping failure.
 
-Current limitation: apply does not yet skip episodes that already have files or are already queued. Reapplying the same plan can submit another targeted search, so do not repeat an apply without checking Sonarr directly until `wit status` and repeat-apply safeguards are implemented.
+Harmless title case, punctuation, and whitespace differences are accepted. Material series-title, episode-title, or title/coordinate differences are displayed and require a second interactive confirmation. Non-interactive callers must separately provide `--allow-mismatch`; `--yes` alone does not approve metadata that differs from the inspected plan.
+
+Episodes for which Sonarr already has a file are skipped. Episodes in queued, downloading, or importing queue states are also skipped, so repeating an apply does not submit another search for work already in progress. A matching warning or failed queue item is rejected rather than searched again. Wit monitors and submits one targeted `EpisodeSearch` only for the remaining actionable IDs; when none remain, it makes neither call.
+
+The result reports `Applied`, `Skipped-file`, `Skipped-queue`, and `Rejected` counts independently, followed by the command ID or an explicit no-action value. Any rejected episode makes the command exit non-zero, while a no-op consisting only of safe file and queue skips succeeds.
 
 The planned status workflow will use the same plan ID:
 

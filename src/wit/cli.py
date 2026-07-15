@@ -9,7 +9,14 @@ from typing import Annotated
 import typer
 
 from wit import __version__
-from wit.apply import ApplyPlanResult, apply_download_plan
+from wit.apply import (
+    ApplyDiscrepancyConfirmation,
+    ApplyPlanDiscrepancy,
+    ApplyPlanRejectedError,
+    ApplyPlanResult,
+    apply_download_plan,
+    validate_download_plan_age,
+)
 from wit.clients import (
     ServiceHealthResult,
     ServiceHealthState,
@@ -261,6 +268,20 @@ def apply_command(
             help="Confirm without prompting; required when standard input is not interactive.",
         ),
     ] = False,
+    allow_stale: Annotated[
+        bool,
+        typer.Option(
+            "--allow-stale",
+            help="Explicitly allow a stored plan older than the default seven-day limit.",
+        ),
+    ] = False,
+    allow_mismatch: Annotated[
+        bool,
+        typer.Option(
+            "--allow-mismatch",
+            help="Explicitly confirm material current Sonarr metadata differences.",
+        ),
+    ] = False,
 ) -> None:
     """Confirm and apply one stored plan with targeted Sonarr operations."""
     try:
@@ -279,9 +300,20 @@ def apply_command(
         typer.echo(f"Apply failed: {error}")
         raise typer.Exit(code=1) from None
 
-    # Re-render the immutable stored plan immediately before confirmation so an
-    # operator can verify every coordinate that will be sent to Sonarr.
+    # Re-render the immutable stored plan immediately before age validation and
+    # confirmation so an operator can inspect every requested coordinate.
     typer.echo(plan.render())
+    reference_time = _utc_now()
+    try:
+        validate_download_plan_age(
+            plan,
+            as_of=reference_time,
+            allow_stale=allow_stale,
+        )
+    except ApplyPlanRejectedError as error:
+        _render_apply_rejection(error)
+        raise typer.Exit(code=1) from None
+
     if not yes:
         if not _is_interactive_input():
             typer.echo("Apply failed: non-interactive use requires --yes; no Sonarr changes made.")
@@ -290,18 +322,43 @@ def apply_command(
             typer.echo("Apply cancelled; no Sonarr changes made.")
             raise typer.Exit(code=1)
 
+    def confirm_discrepancies(
+        discrepancies: tuple[ApplyPlanDiscrepancy, ...],
+    ) -> bool:
+        return _confirm_apply_discrepancies(
+            discrepancies,
+            allow_mismatch=allow_mismatch,
+        )
+
     try:
-        result = asyncio.run(_apply_plan_through_sonarr(settings, plan))
+        result = asyncio.run(
+            _apply_plan_through_sonarr(
+                settings,
+                plan,
+                as_of=reference_time,
+                allow_stale=allow_stale,
+                confirm_discrepancies=confirm_discrepancies,
+            )
+        )
+    except ApplyPlanRejectedError as error:
+        _render_apply_rejection(error)
+        raise typer.Exit(code=1) from None
     except WitError as error:
         typer.echo(f"Apply failed: {error}")
         raise typer.Exit(code=1) from None
 
     _render_apply_result(result)
+    if result.rejected_count:
+        raise typer.Exit(code=1)
 
 
 async def _apply_plan_through_sonarr(
     settings: WitSettings,
     plan: DownloadPlan,
+    *,
+    as_of: datetime,
+    allow_stale: bool,
+    confirm_discrepancies: ApplyDiscrepancyConfirmation,
 ) -> ApplyPlanResult:
     async with _create_sonarr_client(settings) as client:
         return await apply_download_plan(
@@ -309,6 +366,9 @@ async def _apply_plan_through_sonarr(
             plan=plan,
             root_folder_id=settings.sonarr.root_folder_id,
             quality_profile_id=settings.sonarr.quality_profile_id,
+            as_of=as_of,
+            allow_stale=allow_stale,
+            confirm_discrepancies=confirm_discrepancies,
         )
 
 
@@ -329,15 +389,63 @@ def _is_interactive_input() -> bool:
         return False
 
 
+def _confirm_apply_discrepancies(
+    discrepancies: tuple[ApplyPlanDiscrepancy, ...],
+    *,
+    allow_mismatch: bool,
+) -> bool:
+    typer.echo("Current Sonarr metadata materially differs from the stored plan:")
+    for discrepancy in discrepancies:
+        typer.echo(f"  - {_safe_terminal_text(discrepancy.summary)}")
+
+    if allow_mismatch:
+        typer.echo("Metadata differences explicitly confirmed by --allow-mismatch.")
+        return True
+    if not _is_interactive_input():
+        typer.echo("Reconfirmation requires an interactive terminal or --allow-mismatch.")
+        return False
+    return typer.confirm("Continue using these current Sonarr mappings?", default=False)
+
+
+def _render_apply_rejection(error: ApplyPlanRejectedError) -> None:
+    typer.echo(f"Apply failed: {error}")
+    _render_apply_counts(
+        applied=error.applied_count,
+        skipped_file=error.skipped_file_count,
+        skipped_queue=error.skipped_queue_count,
+        rejected=error.rejected_count,
+    )
+
+
 def _render_apply_result(result: ApplyPlanResult) -> None:
     series_source = "newly added" if result.series_created else "existing"
-    episode_word = "episode" if result.episode_count == 1 else "episodes"
     typer.echo(
-        f"Applied plan {result.plan_id}: monitored {result.episode_count} {episode_word} "
-        f"and submitted one targeted search using {series_source} Sonarr series "
+        f"Processed plan {result.plan_id} using {series_source} Sonarr series "
         f"{result.series.sonarr_id}."
     )
-    typer.echo(f"Sonarr command ID: {result.command.command_id} ({result.command.state.value})")
+    _render_apply_counts(
+        applied=result.applied_count,
+        skipped_file=result.skipped_file_count,
+        skipped_queue=result.skipped_queue_count,
+        rejected=result.rejected_count,
+    )
+    if result.command is None:
+        typer.echo("Sonarr command ID: none (no actionable episodes)")
+    else:
+        typer.echo(f"Sonarr command ID: {result.command.command_id} ({result.command.state.value})")
+
+
+def _render_apply_counts(
+    *,
+    applied: int,
+    skipped_file: int,
+    skipped_queue: int,
+    rejected: int,
+) -> None:
+    typer.echo(f"Applied: {applied}")
+    typer.echo(f"Skipped-file: {skipped_file}")
+    typer.echo(f"Skipped-queue: {skipped_queue}")
+    typer.echo(f"Rejected: {rejected}")
 
 
 @app.command()

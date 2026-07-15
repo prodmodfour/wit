@@ -606,7 +606,7 @@ Commit as one focused orchestration commit.
 
 ## 026 — Make apply idempotent and stale-safe
 
-Status: TODO
+Status: DONE
 
 Add safeguards around repeat or outdated plans.
 
