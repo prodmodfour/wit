@@ -354,7 +354,7 @@ Commit as one focused matching commit.
 
 ## 015 — Add Sonarr library-default and lookup operations
 
-Status: TODO
+Status: DONE
 
 Implement the read-only Sonarr operations needed before adding a series.
 
