@@ -51,13 +51,6 @@ These defaults exclude season zero, specials, future or otherwise unaired episod
 * Seerr is the human discovery and request browser; Pi does not use it for episode-level apply operations.
 * Sonarr owns series, episode monitoring, targeted search, queue, download-client, and import operations. Wit talks to Sonarr rather than controlling qBittorrent directly.
 * Jellyfin owns the completed-media catalogue and playback. Use `wit status` to check whether Sonarr-imported episodes are visible there; playback itself happens in Jellyfin.
-
-Documentation rules
-
-Update docs only when required by the selected ticket or when that ticket changes behaviour, setup, architecture, operations, security, limitations, or public-facing usage.
-
-Prefer clear, honest limitations over pretending the project is production-ready.
-
 ## Testing and validation
 
 Use the project’s quality gate:
@@ -67,6 +60,4 @@ scripts/quality-gate.sh
 ```
 
 Tests must be deterministic and offline. Use mocked/fake service responses; never require real Jellyfin, Seerr, Sonarr, qBittorrent, TVmaze, media files, or API credentials in CI.
-
-If project-specific validation is missing, improve it only when the selected ticket requires that change.
 
